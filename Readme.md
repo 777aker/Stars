@@ -6,7 +6,7 @@ An exploration of star formation using the basics.
 
 ### Phase 1 - Graphics
 
-1. Display a window
+1. ~~Display a window~~
 2. Display and record FPS for tracking
 3. Draw Points
 4. Give points velocity and bounds

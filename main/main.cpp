@@ -5,6 +5,8 @@
 #include <random>
 
 std::vector<Point> points = {};
+bool pause = false;
+bool step = false;
 
 /**
  * @brief respond to key pressed
@@ -25,6 +27,12 @@ void key(GLFWwindow *windowobj, int key, [[maybe_unused]] int scancode, int acti
 	case GLFW_KEY_ESCAPE:
 		glfwSetWindowShouldClose(windowobj, 1);
 		break;
+	case GLFW_KEY_SPACE:
+		pause = !pause;
+		break;
+	case GLFW_KEY_ENTER:
+		step = true;
+		break;
 	}
 }
 
@@ -42,7 +50,7 @@ void do_physics()
 
 void draw_points()
 {
-	glPointSize(1.0f);
+	glPointSize(10.0f);
 	glColor3f(1.0f, 1.0f, 1.0f);
 	glEnableClientState(GL_VERTEX_ARRAY);
 	glVertexPointer(2, GL_FLOAT, sizeof(Point), &points[0].x);
@@ -66,7 +74,11 @@ void display_loop(Window *windowobj)
 		glRasterPos2i(-dim * asp + 0.05 * dim, dim - 0.05 * dim);
 		Print("FPS=%d", windowobj->FramesPerSecond());
 
-		do_physics();
+		if (!pause || step)
+		{
+			step = false;
+			do_physics();
+		}
 		draw_points();
 
 		// check for display errors
@@ -94,8 +106,8 @@ void init_stuff()
 		points.push_back(std::move(Point{
 			(float)(dim_dist(rng) * asp),
 			(float)dim_dist(rng),
-			(float)v_dist(rng) - P_SPEED,
-			(float)v_dist(rng) - P_SPEED}));
+			glm::vec2((float)v_dist(rng) - P_SPEED,
+					  (float)v_dist(rng) - P_SPEED)}));
 	}
 }
 

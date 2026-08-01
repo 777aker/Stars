@@ -19,7 +19,7 @@ endif
 
 all: main.o
 
-main.o: main.cpp
+main.o: main.cpp point.hpp
 
 .cpp.o:
 	g++ -c $(CFLG) -I /usr/include/opencv4 $<

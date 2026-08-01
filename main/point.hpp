@@ -13,6 +13,7 @@ public:
     Point(float tx, float ty, glm::vec2 tv) : x(tx), y(ty), velocity(tv)
     {
         nextv = velocity;
+        nextpos = glm::vec2(x, y);
     }
 
     void doGravandCollide(Point other)
@@ -39,43 +40,27 @@ public:
         otherdir = glm::normalize(otherdir);
 
         // moving apart abort probably already collided
-        glm::vec2 vdir = other.velocity - velocity;
-        if (glm::dot(dir, vdir) > 0)
-        {
-            return;
-        }
+        // glm::vec2 vdir = other.velocity - velocity;
+        // if (glm::dot(dir, vdir) > 0)
+        // {
+        //     return;
+        // }
 
         nextv += otherdir * glm::dot(otherdir, other.velocity) * 0.8f;
         nextv -= dir * glm::dot(dir, velocity) * 0.8f;
+        nextpos += otherdir * (2 - d) * 1.2f;
     }
 
     void doPhysics(float dim, float asp)
     {
-
-        if (nextv.x < -dim * asp)
-        {
-            nextv.x = abs(nextv.x) * 0.2;
-        }
-        else if (nextv.x > dim * asp)
-        {
-            nextv.x = -abs(nextv.x) * 0.2;
-        }
-
-        if (nextv.y < -dim)
-        {
-            nextv.y = abs(nextv.y) * 0.2;
-        }
-        else if (nextv.y > dim)
-        {
-            nextv.y = -abs(nextv.y) * 0.2;
-        }
-
         velocity = nextv;
+        nextpos += velocity;
         // add velocity to position
-        x += velocity.x;
-        y += velocity.y;
+        x = nextpos.x;
+        y = nextpos.y;
     }
 
 private:
+    glm::vec2 nextpos;
     glm::vec2 nextv;
 };

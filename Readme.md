@@ -8,8 +8,8 @@ An exploration of star formation using the basics.
 
 1. ~~Display a window~~
 2. ~~FPS~~
-3. Draw points
-4. Give points velocity and bounds
+3. ~~Draw points~~
+4. ~~Give points velocity and bounds~~
 
 ### Phase 2 - the CPU
 

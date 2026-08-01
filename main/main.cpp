@@ -99,7 +99,7 @@ void init_stuff()
 {
 	std::mt19937 rng(1234);
 	std::uniform_int_distribution<int32_t> dim_dist(-dim, dim);
-#define P_SPEED 0.0005f
+#define P_SPEED 0.005f
 	std::normal_distribution<float> v_dist(P_SPEED, P_SPEED / 2.0f);
 	for (int i = 0; i < 1000; i++)
 	{

@@ -24,19 +24,26 @@ public:
         // get distance
         float d = glm::distance(pos, otherpos);
         // if we aren't colliding
-        if (d > 2)
-        {
-            // gravity to other point
-            // nextv += 1 / (d * d * d) * dir * 0.000001f;
-            return;
-        }
+        // gravity to other point
         if (d == 0)
         {
+            return;
+        }
+        if (d > 2)
+        {
+            nextv += 1 / (d * d * d) * dir * 0.00001f;
             return;
         }
         glm::vec2 otherdir = pos - otherpos;
         dir = glm::normalize(dir);
         otherdir = glm::normalize(otherdir);
+
+        // moving apart abort probably already collided
+        glm::vec2 vdir = other.velocity - velocity;
+        if (glm::dot(dir, vdir) > 0)
+        {
+            return;
+        }
 
         nextv += otherdir * glm::dot(otherdir, other.velocity) * 0.8f;
         nextv -= dir * glm::dot(dir, velocity) * 0.8f;
@@ -45,23 +52,23 @@ public:
     void doPhysics(float dim, float asp)
     {
 
-        // if (nextv.x < -dim * asp)
-        // {
-        //     nextv.x = abs(nextv.x) * 0.2;
-        // }
-        // else if (nextv.x > dim * asp)
-        // {
-        //     nextv.x = -abs(nextv.x) * 0.2;
-        // }
+        if (nextv.x < -dim * asp)
+        {
+            nextv.x = abs(nextv.x) * 0.2;
+        }
+        else if (nextv.x > dim * asp)
+        {
+            nextv.x = -abs(nextv.x) * 0.2;
+        }
 
-        // if (nextv.y < -dim)
-        // {
-        //     nextv.y = abs(nextv.y) * 0.2;
-        // }
-        // else if (nextv.y > dim)
-        // {
-        //     nextv.y = -abs(nextv.y) * 0.2;
-        // }
+        if (nextv.y < -dim)
+        {
+            nextv.y = abs(nextv.y) * 0.2;
+        }
+        else if (nextv.y > dim)
+        {
+            nextv.y = -abs(nextv.y) * 0.2;
+        }
 
         velocity = nextv;
         // add velocity to position

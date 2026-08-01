@@ -4,8 +4,8 @@
  */
 #include "window.hpp"
 
-double dim = 100; // size of the world
-double asp = 1;	  // aspect ratio
+double dim = 5000; // size of the world
+double asp = 1;	   // aspect ratio
 
 // Fatal error occured
 static void Fatal(const char *format, ...)

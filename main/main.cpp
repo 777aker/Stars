@@ -59,7 +59,7 @@ void display_loop(Window *windowobj)
 
 		// want to see fps
 		glColor3ub(nephritis.r, nephritis.g, nephritis.b);
-		glRasterPos2i(-dim * asp + 5, dim - 5);
+		glRasterPos2i(-dim * asp + 0.05 * dim, dim - 0.05 * dim);
 		Print("FPS=%d", windowobj->FramesPerSecond());
 
 		do_physics();

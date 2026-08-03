@@ -3,6 +3,8 @@
 #include <cmath>
 #include <glm/glm.hpp>
 
+#include <iostream>
+
 class Point
 {
 public:
@@ -13,7 +15,6 @@ public:
     Point(float tx, float ty, glm::vec2 tv) : x(tx), y(ty), velocity(tv)
     {
         nextv = velocity;
-        nextpos = glm::vec2(x, y);
     }
 
     void doGravandCollide(Point other)
@@ -22,45 +23,37 @@ public:
         glm::vec2 pos(x, y);
         glm::vec2 otherpos(other.x, other.y);
         glm::vec2 dir = otherpos - pos;
+        dir = glm::normalize(dir);
         // get distance
         float d = glm::distance(pos, otherpos);
         // if we aren't colliding
         // gravity to other point
-        if (d == 0)
+        if (d < 1.0f)
         {
             return;
         }
-        if (d > 2)
+        if (d > 2.0f)
         {
-            nextv += 1 / (d * d * d) * dir * 0.00001f;
+            nextv += 1 / (d * d * d) * dir * 0.001f;
             return;
         }
-        glm::vec2 otherdir = pos - otherpos;
-        dir = glm::normalize(dir);
-        otherdir = glm::normalize(otherdir);
-
-        // moving apart abort probably already collided
-        // glm::vec2 vdir = other.velocity - velocity;
-        // if (glm::dot(dir, vdir) > 0)
-        // {
-        //     return;
-        // }
-
-        nextv += otherdir * glm::dot(otherdir, other.velocity) * 0.8f;
+        if (glm::dot(dir, other.velocity - velocity) > 0.0f)
+        {
+            return;
+        }
+        glm::vec2 otherdir = glm::normalize(pos - otherpos);
         nextv -= dir * glm::dot(dir, velocity) * 0.8f;
-        nextpos += otherdir * (2 - d) * 1.2f;
+        nextv += otherdir * glm::dot(otherdir, other.velocity) * 0.8f;
     }
 
     void doPhysics(float dim, float asp)
     {
         velocity = nextv;
-        nextpos += velocity;
         // add velocity to position
-        x = nextpos.x;
-        y = nextpos.y;
+        x += velocity.x;
+        y += velocity.y;
     }
 
 private:
-    glm::vec2 nextpos;
     glm::vec2 nextv;
 };

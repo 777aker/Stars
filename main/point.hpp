@@ -3,8 +3,6 @@
 #include <cmath>
 #include <glm/glm.hpp>
 
-#include <iostream>
-
 class Point
 {
 public:
@@ -48,6 +46,22 @@ public:
 
     void doPhysics(float dim, float asp)
     {
+        if (x < -dim * asp)
+        {
+            nextv.x = abs(nextv.x);
+        }
+        else if (x > dim * asp)
+        {
+            nextv.x = -abs(nextv.x);
+        }
+        if (y < -dim)
+        {
+            nextv.y = abs(nextv.y);
+        }
+        else if (y > dim)
+        {
+            nextv.y = -abs(nextv.y);
+        }
         velocity = nextv;
         // add velocity to position
         x += velocity.x;

@@ -1,9 +1,11 @@
 #include "../window/window.hpp"
 #include "point.hpp"
+#include "tree.hpp"
 
 #include <vector>
 #include <random>
 
+QuadTree *theroot;
 std::vector<Point> points = {};
 bool pause = false;
 bool step = false;
@@ -61,6 +63,20 @@ void draw_points()
 	glDisableClientState(GL_VERTEX_ARRAY);
 }
 
+void build_tree()
+{
+	if (theroot != nullptr)
+	{
+		delete theroot;
+	}
+
+	theroot = new QuadTree(4, glm::vec2(-dim * asp, dim), glm::vec2(dim * asp, -dim));
+	for (Point &point : points)
+	{
+		theroot->insert_point(&point);
+	}
+}
+
 /**
  * @brief main display loop
  *
@@ -80,6 +96,8 @@ void display_loop(Window *windowobj)
 		if (!pause || step)
 		{
 			step = false;
+			build_tree();
+			theroot->draw_me();
 			do_physics();
 		}
 		draw_points();
@@ -104,7 +122,7 @@ void init_stuff()
 	std::uniform_int_distribution<int32_t> dim_dist(-dim, dim);
 #define P_SPEED 0.005f
 	std::normal_distribution<float> v_dist(P_SPEED, P_SPEED / 2.0f);
-	for (int i = 0; i < 2000; i++)
+	for (int i = 0; i < 10; i++)
 	{
 		points.push_back(std::move(Point{
 			(float)(dim_dist(rng) * asp),

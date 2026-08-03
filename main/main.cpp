@@ -55,7 +55,7 @@ void do_physics()
 
 void draw_points()
 {
-	glPointSize(5.0f);
+	glPointSize(1000.0f / dim);
 	glColor3f(1.0f, 1.0f, 1.0f);
 	glEnableClientState(GL_VERTEX_ARRAY);
 	glVertexPointer(2, GL_FLOAT, sizeof(Point), &points[0].x);
@@ -122,7 +122,7 @@ void init_stuff()
 	std::uniform_int_distribution<int32_t> dim_dist(-dim, dim);
 #define P_SPEED 0.005f
 	std::normal_distribution<float> v_dist(P_SPEED, P_SPEED / 2.0f);
-	for (int i = 0; i < 10; i++)
+	for (int i = 0; i < 1000; i++)
 	{
 		points.push_back(std::move(Point{
 			(float)(dim_dist(rng) * asp),

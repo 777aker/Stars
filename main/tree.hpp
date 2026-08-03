@@ -25,7 +25,6 @@ public:
     QuadTree(int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright)
         : max_size(tmax_size), lowerleft(tlowerleft), topright(ttopright)
     {
-        center = glm::vec2((lowerleft.x + topright.x) / 2, (lowerleft.y + topright.y) / 2);
     }
 
     ~QuadTree()
@@ -65,17 +64,17 @@ public:
         if (mypoints.size() > max_size)
         {
             split = true;
-            glm::vec2 centroid{0, 0};
+            center = glm::vec2(0, 0);
             for (Point *point : mypoints)
             {
-                centroid += glm::vec2(point->x, point->y);
+                center += glm::vec2(point->x, point->y);
             }
-            centroid /= static_cast<float>(mypoints.size());
+            center /= static_cast<float>(mypoints.size());
 
-            bot_left = new QuadTree(max_size, lowerleft, centroid);
-            bot_right = new QuadTree(max_size, glm::vec2(centroid.x, lowerleft.y), glm::vec2(topright.x, centroid.y));
-            top_left = new QuadTree(max_size, glm::vec2(lowerleft.x, centroid.y), glm::vec2(centroid.x, topright.y));
-            top_right = new QuadTree(max_size, centroid, topright);
+            bot_left = new QuadTree(max_size, lowerleft, center);
+            bot_right = new QuadTree(max_size, glm::vec2(center.x, lowerleft.y), glm::vec2(topright.x, center.y));
+            top_left = new QuadTree(max_size, glm::vec2(lowerleft.x, center.y), glm::vec2(center.x, topright.y));
+            top_right = new QuadTree(max_size, center, topright);
 
             for (Point *point : mypoints)
             {
@@ -94,16 +93,16 @@ public:
             bot_right->draw_me();
             top_left->draw_me();
             top_right->draw_me();
-        }
 
-        glColor3f(1.0f, 0.0f, 1.0f);
-        glLineWidth(1.0f);
-        glBegin(GL_LINES);
-        glVertex2f(lowerleft.x, center.y);
-        glVertex2f(topright.x, center.y);
-        glVertex2f(center.x, lowerleft.y);
-        glVertex2f(center.x, topright.y);
-        glEnd();
+            glColor3f(1.0f, 0.0f, 1.0f);
+            glLineWidth(1.0f);
+            glBegin(GL_LINES);
+            glVertex2f(lowerleft.x, center.y);
+            glVertex2f(topright.x, center.y);
+            glVertex2f(center.x, lowerleft.y);
+            glVertex2f(center.x, topright.y);
+            glEnd();
+        }
     }
 
 private:

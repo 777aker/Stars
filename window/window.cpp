@@ -4,7 +4,7 @@
  */
 #include "window.hpp"
 
-double dim = 500; // size of the world
+double dim = 100; // size of the world
 double asp = 1;	  // aspect ratio
 
 // Fatal error occured

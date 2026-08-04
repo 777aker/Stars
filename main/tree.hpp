@@ -161,7 +161,7 @@ public:
         {
             for (Point *other : mypoints)
             {
-                point->doGravandCollide(*other);
+                point->doCollide(*other);
             }
             for (quadGrav grav : *toplevelgrav)
             {

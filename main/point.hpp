@@ -2,12 +2,16 @@
 
 #include <cmath>
 #include <glm/glm.hpp>
+#include <algorithm>
 
 class Point
 {
 public:
     float x;
     float y;
+    float r = 0.6f;
+    float g = 0.3f;
+    float b = 0.2f;
     glm::vec2 velocity;
     glm::vec2 nextv;
 
@@ -16,7 +20,7 @@ public:
         nextv = velocity;
     }
 
-    void doGravandCollide(Point other)
+    void doCollide(Point other)
     {
         // get direction to other point
         glm::vec2 pos(x, y);
@@ -43,6 +47,9 @@ public:
         glm::vec2 otherdir = glm::normalize(pos - otherpos);
         nextv -= dir * glm::dot(dir, velocity) * 0.8f;
         nextv += otherdir * glm::dot(otherdir, other.velocity) * 0.8f;
+        r += 0.0001f;
+        g += 0.05f;
+        b -= 0.00001f;
     }
 
     void doPhysics(float dim, float asp)
@@ -67,5 +74,11 @@ public:
         // add velocity to position
         x += velocity.x;
         y += velocity.y;
+        r -= 0.001f;
+        g -= 0.01f;
+        b -= 0.0001f;
+        r = std::clamp(r, 0.6f, 0.7f);
+        g = std::clamp(g, 0.3f, 0.6f);
+        b = std::clamp(b, 0.0f, 0.2f);
     }
 };

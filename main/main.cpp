@@ -53,9 +53,12 @@ void draw_points()
 	glPointSize(1000.0f / dim);
 	glColor3f(1.0f, 1.0f, 1.0f);
 	glEnableClientState(GL_VERTEX_ARRAY);
+	glEnableClientState(GL_COLOR_ARRAY);
 	glVertexPointer(2, GL_FLOAT, sizeof(Point), &points[0].x);
+	glColorPointer(3, GL_FLOAT, sizeof(Point), &points[0].r);
 	glDrawArrays(GL_POINTS, 0, points.size());
 	glDisableClientState(GL_VERTEX_ARRAY);
+	glDisableClientState(GL_COLOR_ARRAY);
 }
 
 void build_tree()

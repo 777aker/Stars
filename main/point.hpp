@@ -9,6 +9,7 @@ public:
     float x;
     float y;
     glm::vec2 velocity;
+    glm::vec2 nextv;
 
     Point(float tx, float ty, glm::vec2 tv) : x(tx), y(ty), velocity(tv)
     {
@@ -30,11 +31,11 @@ public:
         {
             return;
         }
-        if (d > 2.0f)
-        {
-            nextv += 1 / (d * d * d) * dir * 0.001f;
-            return;
-        }
+        // if (d > 2.0f)
+        // {
+        //     nextv += 1 / (d * d * d) * dir * 0.001f;
+        //     return;
+        // }
         if (glm::dot(dir, other.velocity - velocity) > 0.0f)
         {
             return;
@@ -67,7 +68,4 @@ public:
         x += velocity.x;
         y += velocity.y;
     }
-
-private:
-    glm::vec2 nextv;
 };

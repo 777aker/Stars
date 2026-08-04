@@ -19,11 +19,24 @@
 #include <glm/glm.hpp>
 #include <vector>
 
+struct quadGrav
+{
+    glm::vec2 center;
+    float power;
+};
+
 class QuadTree
 {
 public:
     QuadTree(int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright)
         : max_size(tmax_size), lowerleft(tlowerleft), topright(ttopright)
+    {
+        gravowner = true;
+        toplevelgrav = new std::vector<quadGrav>();
+    }
+
+    QuadTree(int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright, std::vector<quadGrav> *topgrav)
+        : max_size(tmax_size), lowerleft(tlowerleft), topright(ttopright), toplevelgrav(topgrav)
     {
     }
 
@@ -35,6 +48,11 @@ public:
             delete bot_right;
             delete top_left;
             delete top_right;
+        }
+
+        if (gravowner)
+        {
+            delete toplevelgrav;
         }
     }
 
@@ -71,10 +89,10 @@ public:
             }
             center /= static_cast<float>(mypoints.size());
 
-            bot_left = new QuadTree(max_size, lowerleft, center);
-            bot_right = new QuadTree(max_size, glm::vec2(center.x, lowerleft.y), glm::vec2(topright.x, center.y));
-            top_left = new QuadTree(max_size, glm::vec2(lowerleft.x, center.y), glm::vec2(center.x, topright.y));
-            top_right = new QuadTree(max_size, center, topright);
+            bot_left = new QuadTree(max_size, lowerleft, center, toplevelgrav);
+            bot_right = new QuadTree(max_size, glm::vec2(center.x, lowerleft.y), glm::vec2(topright.x, center.y), toplevelgrav);
+            top_left = new QuadTree(max_size, glm::vec2(lowerleft.x, center.y), glm::vec2(center.x, topright.y), toplevelgrav);
+            top_right = new QuadTree(max_size, center, topright, toplevelgrav);
 
             for (Point *point : mypoints)
             {
@@ -105,10 +123,57 @@ public:
         }
     }
 
+    void calcgrav()
+    {
+        if (split)
+        {
+            bot_left->calcgrav();
+            bot_right->calcgrav();
+            top_left->calcgrav();
+            top_right->calcgrav();
+            return;
+        }
+        struct quadGrav mygrav = {
+            center,
+            mypoints.size()};
+        toplevelgrav->push_back(std::move(mygrav));
+    }
+
+    void do_physics()
+    {
+        if (split)
+        {
+            bot_left->do_physics();
+            bot_right->do_physics();
+            top_left->do_physics();
+            top_right->do_physics();
+            return;
+        }
+
+        for (Point *point : mypoints)
+        {
+            for (Point *other : mypoints)
+            {
+                point->doGravandCollide(*other);
+            }
+            for (quadGrav grav : *toplevelgrav)
+            {
+                glm::vec2 pos(point->x, point->y);
+                glm::vec2 dir = grav.center - pos;
+                float d = glm::distance(pos, grav.center);
+                if (d > 2.0f)
+                    point->nextv += grav.power / (d * d * d) * dir * 0.001f;
+            }
+        }
+    }
+
 private:
     int max_size;
     bool split = false;
+    bool gravowner = false;
     std::vector<Point *> mypoints;
+
+    std::vector<quadGrav> *toplevelgrav;
 
     glm::vec2 lowerleft;
     glm::vec2 topright;

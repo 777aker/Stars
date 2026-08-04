@@ -40,13 +40,8 @@ void key(GLFWwindow *windowobj, int key, [[maybe_unused]] int scancode, int acti
 
 void do_physics()
 {
-	for (Point &point : points)
-	{
-		for (Point &others : points)
-		{
-			point.doGravandCollide(others);
-		}
-	}
+	theroot->calcgrav();
+	theroot->do_physics();
 	for (Point &point : points)
 	{
 		point.doPhysics(dim, asp);
@@ -92,12 +87,14 @@ void display_loop(Window *windowobj)
 		glColor3ub(nephritis.r, nephritis.g, nephritis.b);
 		glRasterPos2i(-dim * asp + 0.05 * dim, dim - 0.05 * dim);
 		Print("FPS=%d", windowobj->FramesPerSecond());
+		glRasterPos2i(-dim * asp + 0.05 * dim, dim - 0.05 * dim - 2.0);
+		Print("Particles=%d", points.size());
 
 		if (!pause || step)
 		{
 			step = false;
 			build_tree();
-			theroot->draw_me();
+			// theroot->draw_me();
 			do_physics();
 		}
 		draw_points();
@@ -130,6 +127,11 @@ void init_stuff()
 			glm::vec2((float)v_dist(rng) - P_SPEED,
 					  (float)v_dist(rng) - P_SPEED)}));
 	}
+
+	// points.push_back(std::move(Point{
+	// 	-50.0f, 0.5f, glm::vec2(0.001f, 0.0f)}));
+	// points.push_back(std::move(Point{
+	// 	50.0f, 0.0f, glm::vec2(0.0f, 0.0f)}));
 }
 
 /**

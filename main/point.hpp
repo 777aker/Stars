@@ -31,11 +31,11 @@ public:
         {
             return;
         }
-        // if (d > 2.0f)
-        // {
-        //     nextv += 1 / (d * d * d) * dir * 0.001f;
-        //     return;
-        // }
+        if (d > 2.0f)
+        {
+            // nextv += 1 / (d * d * d) * dir * 0.001f;
+            return;
+        }
         if (glm::dot(dir, other.velocity - velocity) > 0.0f)
         {
             return;

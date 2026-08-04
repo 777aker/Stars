@@ -14,8 +14,8 @@ An exploration of star formation using the basics.
 ### Phase 2 - the CPU
 
 5. ~~CPU brute force collision~~
-6. CPU quad tree
-7. CPU quad tree collision
+6. ~~CPU quad tree~~
+7. ~~CPU quad tree collision and grav~~
 8. CPU threaded quad tree building
 9. CPU threaded quad tree collision
 

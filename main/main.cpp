@@ -65,7 +65,7 @@ void build_tree()
 		delete theroot;
 	}
 
-	theroot = new QuadTree(4, glm::vec2(-dim * asp, dim), glm::vec2(dim * asp, -dim));
+	theroot = new QuadTree(128, glm::vec2(-dim * asp, dim), glm::vec2(dim * asp, -dim));
 	for (Point &point : points)
 	{
 		theroot->insert_point(&point);
@@ -87,7 +87,7 @@ void display_loop(Window *windowobj)
 		glColor3ub(nephritis.r, nephritis.g, nephritis.b);
 		glRasterPos2i(-dim * asp + 0.05 * dim, dim - 0.05 * dim);
 		Print("FPS=%d", windowobj->FramesPerSecond());
-		glRasterPos2i(-dim * asp + 0.05 * dim, dim - 0.05 * dim - 2.0);
+		glRasterPos2i(-dim * asp + 0.05 * dim, dim - 0.05 * dim - 0.02 * dim);
 		Print("Particles=%d", points.size());
 
 		if (!pause || step)
@@ -119,7 +119,7 @@ void init_stuff()
 	std::uniform_int_distribution<int32_t> dim_dist(-dim, dim);
 #define P_SPEED 0.005f
 	std::normal_distribution<float> v_dist(P_SPEED, P_SPEED / 2.0f);
-	for (int i = 0; i < 1000; i++)
+	for (int i = 0; i < 5000; i++)
 	{
 		points.push_back(std::move(Point{
 			(float)(dim_dist(rng) * asp),

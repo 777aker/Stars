@@ -28,14 +28,14 @@ struct quadGrav
 class QuadTree
 {
 public:
-    QuadTree(int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright)
+    QuadTree(unsigned long int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright)
         : max_size(tmax_size), lowerleft(tlowerleft), topright(ttopright)
     {
         gravowner = true;
         toplevelgrav = new std::vector<quadGrav>();
     }
 
-    QuadTree(int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright, std::vector<quadGrav> *topgrav)
+    QuadTree(unsigned long int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright, std::vector<quadGrav> *topgrav)
         : max_size(tmax_size), lowerleft(tlowerleft), topright(ttopright), toplevelgrav(topgrav)
     {
     }
@@ -133,9 +133,16 @@ public:
             top_right->calcgrav();
             return;
         }
+
+        glm::vec2 gravcenter(0.0f, 0.0f);
+        for (Point *point : mypoints)
+        {
+            gravcenter += glm::vec2(point->x, point->y);
+        }
+        gravcenter /= mypoints.size();
         struct quadGrav mygrav = {
-            center,
-            mypoints.size()};
+            gravcenter,
+            static_cast<float>(mypoints.size())};
         toplevelgrav->push_back(std::move(mygrav));
     }
 
@@ -162,22 +169,24 @@ public:
                 glm::vec2 dir = grav.center - pos;
                 float d = glm::distance(pos, grav.center);
                 if (d > 2.0f)
+                {
                     point->nextv += grav.power / (d * d * d) * dir * 0.001f;
+                }
             }
         }
     }
 
 private:
-    int max_size;
+    unsigned long int max_size;
     bool split = false;
     bool gravowner = false;
     std::vector<Point *> mypoints;
 
-    std::vector<quadGrav> *toplevelgrav;
-
     glm::vec2 lowerleft;
     glm::vec2 topright;
     glm::vec2 center;
+
+    std::vector<quadGrav> *toplevelgrav;
 
     QuadTree *bot_left;
     QuadTree *bot_right;

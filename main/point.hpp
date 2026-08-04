@@ -7,11 +7,13 @@
 class Point
 {
 public:
+    // store position and color of draw arrays as floats at beginning of class
     float x;
     float y;
     float r = 0.6f;
     float g = 0.3f;
     float b = 0.2f;
+    // need a velocity to use and a velocity to update mid frame
     glm::vec2 velocity;
     glm::vec2 nextv;
 
@@ -20,6 +22,8 @@ public:
         nextv = velocity;
     }
 
+    // handle a potential collision between two points
+    // only edits itself does not edit other because other will also see the collision and edit itself later
     void doCollide(Point other)
     {
         // get direction to other point
@@ -30,7 +34,6 @@ public:
         // get distance
         float d = glm::distance(pos, otherpos);
         // if we aren't colliding
-        // gravity to other point
         if (d < 1.0f)
         {
             return;
@@ -40,20 +43,26 @@ public:
             // nextv += 1 / (d * d * d) * dir * 0.001f;
             return;
         }
+        // if we're moving apart we've already solved for collision abort
         if (glm::dot(dir, other.velocity - velocity) > 0.0f)
         {
             return;
         }
         glm::vec2 otherdir = glm::normalize(pos - otherpos);
+        // subtract the velocity from myself that I give to the other point
         nextv -= dir * glm::dot(dir, velocity) * 0.8f;
+        // add the velocity the other point gave me
         nextv += otherdir * glm::dot(otherdir, other.velocity) * 0.8f;
+        // make pretty changes
         r += 0.0001f;
         g += 0.05f;
         b -= 0.00001f;
     }
 
+    // really this just moves the points
     void doPhysics(float dim, float asp)
     {
+        // keep points in bounds
         if (x < -dim * asp)
         {
             nextv.x = abs(nextv.x);
@@ -74,6 +83,7 @@ public:
         // add velocity to position
         x += velocity.x;
         y += velocity.y;
+        // make pretty colors
         r -= 0.001f;
         g -= 0.01f;
         b -= 0.0001f;

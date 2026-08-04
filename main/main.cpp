@@ -38,20 +38,27 @@ void key(GLFWwindow *windowobj, int key, [[maybe_unused]] int scancode, int acti
 	}
 }
 
+// do the physics step
 void do_physics()
 {
+	// first calculate the gravity effect every quad has
 	theroot->calcgrav();
+	// resolve collisions and apply gravity to every point
 	theroot->do_physics();
+	// move every point
 	for (Point &point : points)
 	{
 		point.doPhysics(dim, asp);
 	}
 }
 
+// draw all the points
 void draw_points()
 {
+	// use the dim to show how big are points are
+	// assumes screen size is 1000px
 	glPointSize(1000.0f / dim);
-	glColor3f(1.0f, 1.0f, 1.0f);
+	// use efficient memory arrays to draw color and position
 	glEnableClientState(GL_VERTEX_ARRAY);
 	glEnableClientState(GL_COLOR_ARRAY);
 	glVertexPointer(2, GL_FLOAT, sizeof(Point), &points[0].x);
@@ -61,6 +68,7 @@ void draw_points()
 	glDisableClientState(GL_COLOR_ARRAY);
 }
 
+// build the quad tree
 void build_tree()
 {
 	if (theroot != nullptr)
@@ -116,13 +124,14 @@ void display_loop(Window *windowobj)
 	}
 }
 
+// stuff we initialize
 void init_stuff()
 {
 	std::mt19937 rng(1234);
 	std::uniform_int_distribution<int32_t> dim_dist(-dim, dim);
 #define P_SPEED 0.005f
 	std::normal_distribution<float> v_dist(P_SPEED, P_SPEED / 2.0f);
-	for (int i = 0; i < 5000; i++)
+	for (int i = 0; i < 7500; i++)
 	{
 		points.push_back(std::move(Point{
 			(float)(dim_dist(rng) * asp),
@@ -130,7 +139,7 @@ void init_stuff()
 			glm::vec2((float)v_dist(rng) - P_SPEED,
 					  (float)v_dist(rng) - P_SPEED)}));
 	}
-
+	// for testing collision logic
 	// points.push_back(std::move(Point{
 	// 	-50.0f, 0.5f, glm::vec2(0.001f, 0.0f)}));
 	// points.push_back(std::move(Point{

@@ -3,3 +3,7 @@ CPU Brute Force
 FPS 445
 Particles 1000
 ---
+CPU Quad Tree
+FPS 425
+Particles 7500
+---

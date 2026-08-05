@@ -18,6 +18,8 @@
 
 #include <glm/glm.hpp>
 #include <vector>
+#include <atomic>
+#include <mutex>
 
 struct quadGrav
 {
@@ -162,14 +164,47 @@ public:
     }
 
     // call physics on all of my points or children
-    void do_physics()
+    void do_physics(size_t tid)
     {
+        if (visited.load())
+        {
+            return;
+        }
         if (split)
         {
-            bot_left->do_physics();
-            bot_right->do_physics();
-            top_left->do_physics();
-            top_right->do_physics();
+            switch (tid % 4)
+            {
+            case 0:
+                bot_left->do_physics(tid);
+                bot_right->do_physics(tid);
+                top_left->do_physics(tid);
+                top_right->do_physics(tid);
+                break;
+            case 1:
+                top_right->do_physics(tid);
+                top_left->do_physics(tid);
+                bot_left->do_physics(tid);
+                bot_right->do_physics(tid);
+                break;
+            case 2:
+                top_left->do_physics(tid);
+                top_right->do_physics(tid);
+                bot_left->do_physics(tid);
+                bot_right->do_physics(tid);
+                break;
+            case 3:
+                bot_right->do_physics(tid);
+                top_right->do_physics(tid);
+                bot_left->do_physics(tid);
+                top_left->do_physics(tid);
+                break;
+            }
+            visited.store(true);
+            return;
+        }
+        bool expected = false;
+        if (!visited.compare_exchange_strong(expected, true))
+        {
             return;
         }
         // for every point inside me check if they collide with any other points and do gravity effect
@@ -186,7 +221,7 @@ public:
                 float d = glm::distance(pos, grav.center);
                 if (d > 2.0f)
                 {
-                    point->nextv += grav.power / (d * d * d) * dir * 0.001f;
+                    point->nextv += grav.power / (d * d * d) * dir * 0.0001f;
                 }
             }
         }
@@ -196,7 +231,9 @@ private:
     unsigned long int max_size;
     bool split = false;
     bool gravowner = false;
-    std::vector<Point *> mypoints;
+    std::atomic<bool> visited = false;
+    std::vector<Point *>
+        mypoints;
 
     glm::vec2 lowerleft;
     glm::vec2 topright;

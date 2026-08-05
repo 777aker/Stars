@@ -4,10 +4,11 @@
 
 #include <vector>
 #include <random>
+#include <thread>
 
 QuadTree *theroot;
 std::vector<Point> points = {};
-bool pause = false;
+bool pausephysics = false;
 bool step = false;
 
 /**
@@ -30,12 +31,20 @@ void key(GLFWwindow *windowobj, int key, [[maybe_unused]] int scancode, int acti
 		glfwSetWindowShouldClose(windowobj, 1);
 		break;
 	case GLFW_KEY_SPACE:
-		pause = !pause;
+		pausephysics = !pausephysics;
 		break;
 	case GLFW_KEY_ENTER:
 		step = true;
 		break;
 	}
+}
+
+#define NUM_THREADS 32
+
+void *do_root_physics(size_t tid)
+{
+	theroot->do_physics(tid);
+	return NULL;
 }
 
 // do the physics step
@@ -44,7 +53,20 @@ void do_physics()
 	// first calculate the gravity effect every quad has
 	theroot->calcgrav();
 	// resolve collisions and apply gravity to every point
-	theroot->do_physics();
+	std::vector<std::thread *> threads;
+	threads.resize(NUM_THREADS);
+	for (size_t i = 1; i < NUM_THREADS; i++)
+	{
+		threads[i] = new std::thread(do_root_physics, i);
+	}
+	do_root_physics(0);
+
+	for (size_t i = 1; i < NUM_THREADS; i++)
+	{
+		threads[i]->join();
+		delete threads[i];
+	}
+
 	// move every point
 	for (Point &point : points)
 	{
@@ -101,7 +123,7 @@ void display_loop(Window *windowobj)
 		glRasterPos2i(-dim * asp + 0.05 * dim, dim - 0.05 * dim - 0.02 * dim);
 		Print("Particles=%d", points.size());
 
-		if (!pause || step)
+		if (!pausephysics || step)
 		{
 			step = false;
 			build_tree();
@@ -131,7 +153,7 @@ void init_stuff()
 	std::uniform_int_distribution<int32_t> dim_dist(-dim, dim);
 #define P_SPEED 0.005f
 	std::normal_distribution<float> v_dist(P_SPEED, P_SPEED / 2.0f);
-	for (int i = 0; i < 7500; i++)
+	for (int i = 0; i < 12000; i++)
 	{
 		points.push_back(std::move(Point{
 			(float)(dim_dist(rng) * asp),

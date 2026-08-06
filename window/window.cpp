@@ -4,6 +4,7 @@
  */
 #include "window.hpp"
 
+double dim = mydim;
 double asp = 1; // aspect ratio
 
 // Fatal error occured

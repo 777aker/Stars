@@ -20,7 +20,8 @@
 #include <GL/gl.h>
 #endif
 
-#define dim 500
+#define mydim 100
+extern double dim;
 extern double asp;
 
 // colors for drawing

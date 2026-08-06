@@ -10,16 +10,21 @@ CFLG=-O3 -Wall -Wno-deprecated-declarations  -DUSEGLEW -I/usr/include/opencv4
 LIBS=-lSDL2main -lSDL2 -lSDL2_mixer -lglfw -lglew -framework Cocoa -framework OpenGL -framework IOKit -std=c++23 -pthread
 #  Linux/Unix/Solaris
 else
-CFLG=-O3 -Wall -I/usr/include/opencv4 -Wextra
-LIBS=-lSDL2 -lSDL2_mixer -lglfw -lGLU -lGL -lm -std=c++23 -pthread
+CFLG=-O3 -Wall -I/usr/include/opencv4 -Wextra -std=c++23 -pthread
+LIBS=-lSDL2 -lSDL2_mixer -lglfw -lGLU -lGL -lm
 endif
 #  OSX/Linux/Unix/Solaris
 CLEAN=rm -f $(EXE) *.o *.a
 endif
 
-all: main.o
+all: main.o InitGPUcu.o
 
-main.o: main.cpp point.hpp
+main.o: main.cu point.hpp InitGPUcu.hpp
+InitGPUcu.o: InitGPUcu.cu InitGPUcu.hpp
+
+.SUFFIXES: .c .cpp .cu
+.cu.o:
+	nvcc -O3 -c -Xcompiler -Wall $<
 
 .cpp.o:
 	g++ -c $(CFLG) -I /usr/include/opencv4 $<

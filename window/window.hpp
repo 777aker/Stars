@@ -20,7 +20,7 @@
 #include <GL/gl.h>
 #endif
 
-#define mydim 100
+#define mydim 500
 extern double dim;
 extern double asp;
 

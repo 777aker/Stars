@@ -17,7 +17,7 @@ endif
 CLEAN=rm -f $(EXE) *.o *.a
 endif
 
-all: main.o InitGPUcu.o
+all: main.o
 
 main.o: main.cpp point.hpp tree.hpp
 

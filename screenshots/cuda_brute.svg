@@ -1,0 +1,1722 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="774" onload="init(evt)" viewBox="0 0 1200 774" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+		if (currentSearchTerm === null) return;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="774.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >Flame Graph</text>
+<text id="details" x="10.00" y="757" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="757" > </text>
+<g id="frames">
+<g >
+<title>__dentry_kill (55,475,680 samples, 0.10%)</title><rect x="15.3" y="453" width="1.2" height="15.0" fill="rgb(231,120,28)" rx="2" ry="2" />
+<text  x="18.27" y="463.5" ></text>
+</g>
+<g >
+<title>[[vdso]] (3,999,219,556 samples, 7.27%)</title><rect x="1093.4" y="389" width="85.9" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="1096.43" y="399.5" >[[vdso]]</text>
+</g>
+<g >
+<title>uvm_ioctl (55,549,403 samples, 0.10%)</title><rect x="44.8" y="277" width="1.2" height="15.0" fill="rgb(245,187,44)" rx="2" ry="2" />
+<text  x="47.82" y="287.5" ></text>
+</g>
+<g >
+<title>sysvec_apic_timer_interrupt (55,553,433 samples, 0.10%)</title><rect x="1085.1" y="373" width="1.2" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="1088.09" y="383.5" ></text>
+</g>
+<g >
+<title>drm_syncobj_fd_to_handle_ioctl (55,556,548 samples, 0.10%)</title><rect x="18.8" y="501" width="1.2" height="15.0" fill="rgb(240,164,39)" rx="2" ry="2" />
+<text  x="21.84" y="511.5" ></text>
+</g>
+<g >
+<title>schedule_hrtimeout_range_clock (8,129,205 samples, 0.01%)</title><rect x="10.3" y="453" width="0.2" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="13.33" y="463.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (111,094,536 samples, 0.20%)</title><rect x="16.5" y="565" width="2.3" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="19.46" y="575.5" ></text>
+</g>
+<g >
+<title>wl_proxy_marshal_flags (99,402,889 samples, 0.18%)</title><rect x="21.2" y="629" width="2.2" height="15.0" fill="rgb(224,90,21)" rx="2" ry="2" />
+<text  x="24.23" y="639.5" ></text>
+</g>
+<g >
+<title>uvm_tracker_wait (111,101,809 samples, 0.20%)</title><rect x="41.2" y="229" width="2.4" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="44.25" y="239.5" ></text>
+</g>
+<g >
+<title>__nvoc_objDelete (55,547,863 samples, 0.10%)</title><rect x="32.9" y="149" width="1.2" height="15.0" fill="rgb(214,43,10)" rx="2" ry="2" />
+<text  x="35.90" y="159.5" ></text>
+</g>
+<g >
+<title>drmIoctl (55,555,590 samples, 0.10%)</title><rect x="20.0" y="629" width="1.2" height="15.0" fill="rgb(251,215,51)" rx="2" ry="2" />
+<text  x="23.04" y="639.5" ></text>
+</g>
+<g >
+<title>[[vdso]] (393,556,193 samples, 0.72%)</title><rect x="543.7" y="405" width="8.5" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="546.72" y="415.5" ></text>
+</g>
+<g >
+<title>uvm_ioctl (166,659,669 samples, 0.30%)</title><rect x="34.1" y="277" width="3.6" height="15.0" fill="rgb(245,187,44)" rx="2" ry="2" />
+<text  x="37.09" y="287.5" ></text>
+</g>
+<g >
+<title>__ioctl (277,762,385 samples, 0.51%)</title><rect x="31.7" y="389" width="6.0" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="34.71" y="399.5" ></text>
+</g>
+<g >
+<title>dupMemory (166,651,071 samples, 0.30%)</title><rect x="37.7" y="197" width="3.5" height="15.0" fill="rgb(249,203,48)" rx="2" ry="2" />
+<text  x="40.67" y="207.5" ></text>
+</g>
+<g >
+<title>__ioctl (111,094,536 samples, 0.20%)</title><rect x="16.5" y="613" width="2.3" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="19.46" y="623.5" ></text>
+</g>
+<g >
+<title>__x64_sys_close (55,475,680 samples, 0.10%)</title><rect x="15.3" y="549" width="1.2" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="18.27" y="559.5" ></text>
+</g>
+<g >
+<title>uvm_unlocked_ioctl_entry.part.0 (166,659,669 samples, 0.30%)</title><rect x="34.1" y="293" width="3.6" height="15.0" fill="rgb(237,148,35)" rx="2" ry="2" />
+<text  x="37.09" y="303.5" ></text>
+</g>
+<g >
+<title>libcudart_static_5382377d5c772c9d197c0cda9fd9742ee6ad893c (388,856,691 samples, 0.71%)</title><rect x="37.7" y="597" width="8.3" height="15.0" fill="rgb(243,174,41)" rx="2" ry="2" />
+<text  x="40.67" y="607.5" ></text>
+</g>
+<g >
+<title>mutex_init_generic (55,549,403 samples, 0.10%)</title><rect x="44.8" y="245" width="1.2" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="47.82" y="255.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (55,475,680 samples, 0.10%)</title><rect x="15.3" y="597" width="1.2" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="18.27" y="607.5" ></text>
+</g>
+<g >
+<title>nv_drm_ioctl (111,094,536 samples, 0.20%)</title><rect x="16.5" y="533" width="2.3" height="15.0" fill="rgb(244,183,43)" rx="2" ry="2" />
+<text  x="19.46" y="543.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (277,762,385 samples, 0.51%)</title><rect x="31.7" y="437" width="6.0" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="34.71" y="447.5" ></text>
+</g>
+<g >
+<title>vidmemDestruct_IMPL (55,547,863 samples, 0.10%)</title><rect x="32.9" y="117" width="1.2" height="15.0" fill="rgb(210,26,6)" rx="2" ry="2" />
+<text  x="35.90" y="127.5" ></text>
+</g>
+<g >
+<title>rmapiFreeWithSecInfoTls (55,547,863 samples, 0.10%)</title><rect x="32.9" y="245" width="1.2" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="35.90" y="255.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (388,856,691 samples, 0.71%)</title><rect x="37.7" y="501" width="8.3" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="40.67" y="511.5" ></text>
+</g>
+<g >
+<title>clock_gettime@plt (166,651,135 samples, 0.30%)</title><rect x="1184.0" y="421" width="3.6" height="15.0" fill="rgb(229,112,27)" rx="2" ry="2" />
+<text  x="1187.04" y="431.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (24,883,198,397 samples, 45.26%)</title><rect x="552.2" y="405" width="534.1" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="555.16" y="415.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>scrubSubmitPages (55,547,863 samples, 0.10%)</title><rect x="32.9" y="53" width="1.2" height="15.0" fill="rgb(244,183,43)" rx="2" ry="2" />
+<text  x="35.90" y="63.5" ></text>
+</g>
+<g >
+<title>__clock_gettime (4,332,334,426 samples, 7.88%)</title><rect x="1086.3" y="405" width="93.0" height="15.0" fill="rgb(236,143,34)" rx="2" ry="2" />
+<text  x="1089.28" y="415.5" >__clock_get..</text>
+</g>
+<g >
+<title>__clone3 (23,280,720 samples, 0.04%)</title><rect x="10.0" y="693" width="0.5" height="15.0" fill="rgb(239,158,37)" rx="2" ry="2" />
+<text  x="13.00" y="703.5" ></text>
+</g>
+<g >
+<title>__ioctl (277,752,880 samples, 0.51%)</title><rect x="37.7" y="373" width="5.9" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="40.67" y="383.5" ></text>
+</g>
+<g >
+<title>drm_syncobj_array_wait.isra.0 (55,553,972 samples, 0.10%)</title><rect x="17.7" y="469" width="1.1" height="15.0" fill="rgb(207,9,2)" rx="2" ry="2" />
+<text  x="20.65" y="479.5" ></text>
+</g>
+<g >
+<title>[libnvidia-eglcore.so.595.84] (55,556,751 samples, 0.10%)</title><rect x="12.9" y="693" width="1.2" height="15.0" fill="rgb(210,23,5)" rx="2" ry="2" />
+<text  x="15.88" y="703.5" ></text>
+</g>
+<g >
+<title>uvm_unlocked_ioctl_entry.part.0 (277,752,880 samples, 0.51%)</title><rect x="37.7" y="277" width="5.9" height="15.0" fill="rgb(237,148,35)" rx="2" ry="2" />
+<text  x="40.67" y="287.5" ></text>
+</g>
+<g >
+<title>page_counter_uncharge (55,475,680 samples, 0.10%)</title><rect x="15.3" y="357" width="1.2" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="18.27" y="367.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (111,103,811 samples, 0.20%)</title><rect x="43.6" y="373" width="2.4" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="46.63" y="383.5" ></text>
+</g>
+<g >
+<title>uvm_page_table_range_vec_clear_ptes (55,553,431 samples, 0.10%)</title><rect x="36.5" y="197" width="1.2" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="39.48" y="207.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (55,556,548 samples, 0.10%)</title><rect x="18.8" y="597" width="1.2" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="21.84" y="607.5" ></text>
+</g>
+<g >
+<title>__syscall_cancel_arch (55,475,680 samples, 0.10%)</title><rect x="15.3" y="613" width="1.2" height="15.0" fill="rgb(239,157,37)" rx="2" ry="2" />
+<text  x="18.27" y="623.5" ></text>
+</g>
+<g >
+<title>dput (55,475,680 samples, 0.10%)</title><rect x="15.3" y="501" width="1.2" height="15.0" fill="rgb(238,155,37)" rx="2" ry="2" />
+<text  x="18.27" y="511.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (55,530,045 samples, 0.10%)</title><rect x="24.6" y="517" width="1.1" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="27.55" y="527.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (55,475,680 samples, 0.10%)</title><rect x="15.3" y="565" width="1.2" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="18.27" y="575.5" ></text>
+</g>
+<g >
+<title>__sys_recvmsg (55,530,045 samples, 0.10%)</title><rect x="24.6" y="485" width="1.1" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="27.55" y="495.5" ></text>
+</g>
+<g >
+<title>nvUvmInterfaceDupMemory (166,651,071 samples, 0.30%)</title><rect x="37.7" y="213" width="3.5" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="40.67" y="223.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (388,856,691 samples, 0.71%)</title><rect x="37.7" y="517" width="8.3" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="40.67" y="527.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (53,129,083,380 samples, 96.64%)</title><rect x="47.2" y="517" width="1140.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="50.21" y="527.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>serverFreeResourceTree (55,547,863 samples, 0.10%)</title><rect x="32.9" y="213" width="1.2" height="15.0" fill="rgb(226,100,24)" rx="2" ry="2" />
+<text  x="35.90" y="223.5" ></text>
+</g>
+<g >
+<title>uvm_ioctl (277,752,880 samples, 0.51%)</title><rect x="37.7" y="261" width="5.9" height="15.0" fill="rgb(245,187,44)" rx="2" ry="2" />
+<text  x="40.67" y="271.5" ></text>
+</g>
+<g >
+<title>nohz_balancer_kick (55,553,433 samples, 0.10%)</title><rect x="1085.1" y="245" width="1.2" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="1088.09" y="255.5" ></text>
+</g>
+<g >
+<title>asm_sysvec_apic_timer_interrupt (55,553,433 samples, 0.10%)</title><rect x="1085.1" y="389" width="1.2" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="1088.09" y="399.5" ></text>
+</g>
+<g >
+<title>__hrtimer_run_queues (55,553,433 samples, 0.10%)</title><rect x="1085.1" y="325" width="1.2" height="15.0" fill="rgb(237,150,35)" rx="2" ry="2" />
+<text  x="1088.09" y="335.5" ></text>
+</g>
+<g >
+<title>rmapiDupObject (111,098,055 samples, 0.20%)</title><rect x="37.7" y="181" width="2.4" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="40.67" y="191.5" ></text>
+</g>
+<g >
+<title>__libc_start_main_impl (54,351,115,787 samples, 98.87%)</title><rect x="23.4" y="677" width="1166.6" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="26.36" y="687.5" >__libc_start_main_impl</text>
+</g>
+<g >
+<title>drm_syncobj_timeline_wait_ioctl (55,553,972 samples, 0.10%)</title><rect x="17.7" y="485" width="1.1" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="20.65" y="495.5" ></text>
+</g>
+<g >
+<title>__sysvec_apic_timer_interrupt (55,548,102 samples, 0.10%)</title><rect x="1083.9" y="309" width="1.2" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="1086.89" y="319.5" ></text>
+</g>
+<g >
+<title>nvidia_poll (10,101,010 samples, 0.02%)</title><rect x="10.1" y="485" width="0.2" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="13.11" y="495.5" ></text>
+</g>
+<g >
+<title>do_poll.constprop.0 (18,230,215 samples, 0.03%)</title><rect x="10.1" y="501" width="0.4" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="13.11" y="511.5" ></text>
+</g>
+<g >
+<title>__syscall_cancel_arch (18,230,215 samples, 0.03%)</title><rect x="10.1" y="597" width="0.4" height="15.0" fill="rgb(239,157,37)" rx="2" ry="2" />
+<text  x="13.11" y="607.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,034,461 samples, 0.20%)</title><rect x="1187.6" y="485" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1190.62" y="495.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (277,762,385 samples, 0.51%)</title><rect x="31.7" y="549" width="6.0" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="34.71" y="559.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,034,461 samples, 0.20%)</title><rect x="1187.6" y="501" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1190.62" y="511.5" ></text>
+</g>
+<g >
+<title>uvm_unlocked_ioctl_entry.part.0 (55,549,403 samples, 0.10%)</title><rect x="44.8" y="293" width="1.2" height="15.0" fill="rgb(237,148,35)" rx="2" ry="2" />
+<text  x="47.82" y="303.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (277,762,385 samples, 0.51%)</title><rect x="31.7" y="453" width="6.0" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="34.71" y="463.5" ></text>
+</g>
+<g >
+<title>memmgrFree_IMPL (55,547,863 samples, 0.10%)</title><rect x="32.9" y="101" width="1.2" height="15.0" fill="rgb(212,36,8)" rx="2" ry="2" />
+<text  x="35.90" y="111.5" ></text>
+</g>
+<g >
+<title>__kmalloc_noprof (55,553,972 samples, 0.10%)</title><rect x="17.7" y="437" width="1.1" height="15.0" fill="rgb(235,138,33)" rx="2" ry="2" />
+<text  x="20.65" y="447.5" ></text>
+</g>
+<g >
+<title>__libc_calloc2 (55,557,094 samples, 0.10%)</title><rect x="22.2" y="581" width="1.2" height="15.0" fill="rgb(232,128,30)" rx="2" ry="2" />
+<text  x="25.17" y="591.5" ></text>
+</g>
+<g >
+<title>__fput (55,475,680 samples, 0.10%)</title><rect x="15.3" y="517" width="1.2" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="18.27" y="527.5" ></text>
+</g>
+<g >
+<title>__memcg_slab_free_hook (55,475,680 samples, 0.10%)</title><rect x="15.3" y="405" width="1.2" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="18.27" y="415.5" ></text>
+</g>
+<g >
+<title>Nv04AllocWithAccessSecInfo (55,554,408 samples, 0.10%)</title><rect x="43.6" y="261" width="1.2" height="15.0" fill="rgb(244,182,43)" rx="2" ry="2" />
+<text  x="46.63" y="271.5" ></text>
+</g>
+<g >
+<title>uvm_page_table_range_vec_clear_ptes_gpu (55,553,431 samples, 0.10%)</title><rect x="36.5" y="181" width="1.2" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="39.48" y="191.5" ></text>
+</g>
+<g >
+<title>_int_malloc (55,557,094 samples, 0.10%)</title><rect x="22.2" y="565" width="1.2" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="25.17" y="575.5" ></text>
+</g>
+<g >
+<title>pmaRegmapScanContiguous (55,554,408 samples, 0.10%)</title><rect x="43.6" y="85" width="1.2" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="46.63" y="95.5" ></text>
+</g>
+<g >
+<title>dentry_free (55,475,680 samples, 0.10%)</title><rect x="15.3" y="437" width="1.2" height="15.0" fill="rgb(223,83,19)" rx="2" ry="2" />
+<text  x="18.27" y="447.5" ></text>
+</g>
+<g >
+<title>cuda-EvtHandlr (23,280,720 samples, 0.04%)</title><rect x="10.0" y="709" width="0.5" height="15.0" fill="rgb(215,46,11)" rx="2" ry="2" />
+<text  x="13.00" y="719.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (23,280,720 samples, 0.04%)</title><rect x="10.0" y="661" width="0.5" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="13.00" y="671.5" ></text>
+</g>
+<g >
+<title>rmapiLockAcquire (55,553,627 samples, 0.10%)</title><rect x="34.1" y="165" width="1.2" height="15.0" fill="rgb(243,177,42)" rx="2" ry="2" />
+<text  x="37.09" y="175.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (18,230,215 samples, 0.03%)</title><rect x="10.1" y="549" width="0.4" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="13.11" y="559.5" ></text>
+</g>
+<g >
+<title>uvm_api_create_external_range (55,549,403 samples, 0.10%)</title><rect x="44.8" y="261" width="1.2" height="15.0" fill="rgb(209,19,4)" rx="2" ry="2" />
+<text  x="47.82" y="271.5" ></text>
+</g>
+<g >
+<title>_clientAllocResourceHelper (55,554,408 samples, 0.10%)</title><rect x="43.6" y="181" width="1.2" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="46.63" y="191.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (18,230,215 samples, 0.03%)</title><rect x="10.1" y="581" width="0.4" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="13.11" y="591.5" ></text>
+</g>
+<g >
+<title>RmIoctl (55,554,408 samples, 0.10%)</title><rect x="43.6" y="277" width="1.2" height="15.0" fill="rgb(254,227,54)" rx="2" ry="2" />
+<text  x="46.63" y="287.5" ></text>
+</g>
+<g >
+<title>serverAllocResourceUnderLock (55,554,408 samples, 0.10%)</title><rect x="43.6" y="197" width="1.2" height="15.0" fill="rgb(249,203,48)" rx="2" ry="2" />
+<text  x="46.63" y="207.5" ></text>
+</g>
+<g >
+<title>[unknown]  (55,551,876 samples, 0.10%)</title><rect x="14.1" y="693" width="1.2" height="15.0" fill="rgb(253,223,53)" rx="2" ry="2" />
+<text  x="17.08" y="703.5" ></text>
+</g>
+<g >
+<title>pmaFreePages (55,547,863 samples, 0.10%)</title><rect x="32.9" y="69" width="1.2" height="15.0" fill="rgb(211,30,7)" rx="2" ry="2" />
+<text  x="35.90" y="79.5" ></text>
+</g>
+<g >
+<title>do_sys_poll (18,230,215 samples, 0.03%)</title><rect x="10.1" y="517" width="0.4" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="13.11" y="527.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (388,856,691 samples, 0.71%)</title><rect x="37.7" y="549" width="8.3" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="40.67" y="559.5" ></text>
+</g>
+<g >
+<title>cuMemcpyHtoD_v2 (111,034,461 samples, 0.20%)</title><rect x="1187.6" y="581" width="2.4" height="15.0" fill="rgb(249,206,49)" rx="2" ry="2" />
+<text  x="1190.62" y="591.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (23,280,720 samples, 0.04%)</title><rect x="10.0" y="645" width="0.5" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="13.00" y="655.5" ></text>
+</g>
+<g >
+<title>__kmalloc_noprof (55,553,627 samples, 0.10%)</title><rect x="34.1" y="69" width="1.2" height="15.0" fill="rgb(235,138,33)" rx="2" ry="2" />
+<text  x="37.09" y="79.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (388,856,691 samples, 0.71%)</title><rect x="37.7" y="485" width="8.3" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="40.67" y="495.5" ></text>
+</g>
+<g >
+<title>[libEGL_nvidia.so.595.84] (55,553,490 samples, 0.10%)</title><rect x="11.7" y="677" width="1.2" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="14.69" y="687.5" ></text>
+</g>
+<g >
+<title>[libnvidia-egl-wayland2.so.1.0.1] (111,094,536 samples, 0.20%)</title><rect x="16.5" y="661" width="2.3" height="15.0" fill="rgb(244,181,43)" rx="2" ry="2" />
+<text  x="19.46" y="671.5" ></text>
+</g>
+<g >
+<title>_nv04ControlWithSecInfo (55,555,590 samples, 0.10%)</title><rect x="20.0" y="549" width="1.2" height="15.0" fill="rgb(222,79,19)" rx="2" ry="2" />
+<text  x="23.04" y="559.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (55,551,701 samples, 0.10%)</title><rect x="46.0" y="581" width="1.2" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="49.02" y="591.5" ></text>
+</g>
+<g >
+<title>_portMemAllocNonPagedUntracked (55,553,253 samples, 0.10%)</title><rect x="37.7" y="85" width="1.2" height="15.0" fill="rgb(207,12,3)" rx="2" ry="2" />
+<text  x="40.67" y="95.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,034,461 samples, 0.20%)</title><rect x="1187.6" y="469" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1190.62" y="479.5" ></text>
+</g>
+<g >
+<title>[libnvidia-eglcore.so.595.84] (55,555,590 samples, 0.10%)</title><rect x="20.0" y="645" width="1.2" height="15.0" fill="rgb(210,23,5)" rx="2" ry="2" />
+<text  x="23.04" y="655.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (55,530,045 samples, 0.10%)</title><rect x="24.6" y="549" width="1.1" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="27.55" y="559.5" ></text>
+</g>
+<g >
+<title>cuMemFree_v2 (277,762,385 samples, 0.51%)</title><rect x="31.7" y="597" width="6.0" height="15.0" fill="rgb(221,77,18)" rx="2" ry="2" />
+<text  x="34.71" y="607.5" ></text>
+</g>
+<g >
+<title>nv_drm_ioctl (55,556,548 samples, 0.10%)</title><rect x="18.8" y="549" width="1.2" height="15.0" fill="rgb(244,183,43)" rx="2" ry="2" />
+<text  x="21.84" y="559.5" ></text>
+</g>
+<g >
+<title>[libEGL_nvidia.so.595.84] (55,475,680 samples, 0.10%)</title><rect x="15.3" y="677" width="1.2" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="18.27" y="687.5" ></text>
+</g>
+<g >
+<title>portMemAllocNonPaged (55,553,016 samples, 0.10%)</title><rect x="40.1" y="165" width="1.1" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="43.05" y="175.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (35,295,376,318 samples, 64.20%)</title><rect x="422.9" y="421" width="757.6" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="425.85" y="431.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>clientGenResourceHandle_IMPL (55,544,802 samples, 0.10%)</title><rect x="38.9" y="133" width="1.2" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="41.86" y="143.5" ></text>
+</g>
+<g >
+<title>fdget (55,554,853 samples, 0.10%)</title><rect x="31.7" y="309" width="1.2" height="15.0" fill="rgb(241,167,40)" rx="2" ry="2" />
+<text  x="34.71" y="319.5" ></text>
+</g>
+<g >
+<title>uvm_api_free (166,659,669 samples, 0.30%)</title><rect x="34.1" y="261" width="3.6" height="15.0" fill="rgb(235,139,33)" rx="2" ry="2" />
+<text  x="37.09" y="271.5" ></text>
+</g>
+<g >
+<title>nvkms_call_rm (55,555,590 samples, 0.10%)</title><rect x="20.0" y="581" width="1.2" height="15.0" fill="rgb(223,83,19)" rx="2" ry="2" />
+<text  x="23.04" y="591.5" ></text>
+</g>
+<g >
+<title>mapFind_IMPL (55,544,802 samples, 0.10%)</title><rect x="38.9" y="117" width="1.2" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="41.86" y="127.5" ></text>
+</g>
+<g >
+<title>__ioctl (55,555,590 samples, 0.10%)</title><rect x="20.0" y="613" width="1.2" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="23.04" y="623.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (53,129,083,380 samples, 96.64%)</title><rect x="47.2" y="453" width="1140.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="50.21" y="463.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>__ioctl (55,556,548 samples, 0.10%)</title><rect x="18.8" y="629" width="1.2" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="21.84" y="639.5" ></text>
+</g>
+<g >
+<title>[libnvidia-egl-wayland2.so.1.0.1] (99,402,889 samples, 0.18%)</title><rect x="21.2" y="645" width="2.2" height="15.0" fill="rgb(244,181,43)" rx="2" ry="2" />
+<text  x="24.23" y="655.5" ></text>
+</g>
+<g >
+<title>kfree (55,530,045 samples, 0.10%)</title><rect x="24.6" y="341" width="1.1" height="15.0" fill="rgb(222,78,18)" rx="2" ry="2" />
+<text  x="27.55" y="351.5" ></text>
+</g>
+<g >
+<title>os_acquire_rwlock_write (55,552,611 samples, 0.10%)</title><rect x="35.3" y="117" width="1.2" height="15.0" fill="rgb(207,12,2)" rx="2" ry="2" />
+<text  x="38.29" y="127.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (9,859,896,060 samples, 17.94%)</title><rect x="873.4" y="357" width="211.7" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="876.45" y="367.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>cudaFree (277,762,385 samples, 0.51%)</title><rect x="31.7" y="629" width="6.0" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="34.71" y="639.5" ></text>
+</g>
+<g >
+<title>do_physics (54,240,032,907 samples, 98.67%)</title><rect x="25.7" y="645" width="1164.3" height="15.0" fill="rgb(206,5,1)" rx="2" ry="2" />
+<text  x="28.75" y="655.5" >do_physics</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,034,461 samples, 0.20%)</title><rect x="1187.6" y="453" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1190.62" y="463.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (55,550,571 samples, 0.10%)</title><rect x="1188.8" y="421" width="1.2" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1191.81" y="431.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (23,280,720 samples, 0.04%)</title><rect x="10.0" y="629" width="0.5" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="13.00" y="639.5" ></text>
+</g>
+<g >
+<title>rmapiControlWithSecInfoTls (55,555,590 samples, 0.10%)</title><rect x="20.0" y="533" width="1.2" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="23.04" y="543.5" ></text>
+</g>
+<g >
+<title>mapInsertNew_IMPL (55,553,253 samples, 0.10%)</title><rect x="37.7" y="101" width="1.2" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="40.67" y="111.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (21,273,222,246 samples, 38.70%)</title><rect x="628.5" y="389" width="456.6" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="631.46" y="399.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (277,762,385 samples, 0.51%)</title><rect x="31.7" y="501" width="6.0" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="34.71" y="511.5" ></text>
+</g>
+<g >
+<title>uvm_tracker_wait (55,553,431 samples, 0.10%)</title><rect x="36.5" y="165" width="1.2" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="39.48" y="175.5" ></text>
+</g>
+<g >
+<title>Nv04ControlKernel (55,555,590 samples, 0.10%)</title><rect x="20.0" y="565" width="1.2" height="15.0" fill="rgb(206,6,1)" rx="2" ry="2" />
+<text  x="23.04" y="575.5" ></text>
+</g>
+<g >
+<title>vidmemConstruct_IMPL (55,554,408 samples, 0.10%)</title><rect x="43.6" y="117" width="1.2" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="46.63" y="127.5" ></text>
+</g>
+<g >
+<title>__libc_recvmsg (55,530,045 samples, 0.10%)</title><rect x="24.6" y="581" width="1.1" height="15.0" fill="rgb(220,72,17)" rx="2" ry="2" />
+<text  x="27.55" y="591.5" ></text>
+</g>
+<g >
+<title>_scanContiguousSearchLoop (55,554,408 samples, 0.10%)</title><rect x="43.6" y="69" width="1.2" height="15.0" fill="rgb(243,177,42)" rx="2" ry="2" />
+<text  x="46.63" y="79.5" ></text>
+</g>
+<g >
+<title>finish_dput (55,475,680 samples, 0.10%)</title><rect x="15.3" y="469" width="1.2" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="18.27" y="479.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (277,762,385 samples, 0.51%)</title><rect x="31.7" y="357" width="6.0" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="34.71" y="367.5" ></text>
+</g>
+<g >
+<title>[unknown] (55,475,680 samples, 0.10%)</title><rect x="15.3" y="661" width="1.2" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="18.27" y="671.5" ></text>
+</g>
+<g >
+<title>__clock_gettime (166,572,444 samples, 0.30%)</title><rect x="1180.5" y="421" width="3.5" height="15.0" fill="rgb(236,143,34)" rx="2" ry="2" />
+<text  x="1183.46" y="431.5" ></text>
+</g>
+<g >
+<title>rm_ioctl (55,554,408 samples, 0.10%)</title><rect x="43.6" y="293" width="1.2" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="46.63" y="303.5" ></text>
+</g>
+<g >
+<title>schedule (8,129,205 samples, 0.01%)</title><rect x="10.3" y="437" width="0.2" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="13.33" y="447.5" ></text>
+</g>
+<g >
+<title>nvUvmInterfaceFreeDupedHandle (111,106,238 samples, 0.20%)</title><rect x="34.1" y="213" width="2.4" height="15.0" fill="rgb(218,61,14)" rx="2" ry="2" />
+<text  x="37.09" y="223.5" ></text>
+</g>
+<g >
+<title>_serverGetAndLockClientEntryByHandle (55,552,611 samples, 0.10%)</title><rect x="35.3" y="149" width="1.2" height="15.0" fill="rgb(239,160,38)" rx="2" ry="2" />
+<text  x="38.29" y="159.5" ></text>
+</g>
+<g >
+<title>nvidia_unlocked_ioctl (55,554,408 samples, 0.10%)</title><rect x="43.6" y="309" width="1.2" height="15.0" fill="rgb(241,170,40)" rx="2" ry="2" />
+<text  x="46.63" y="319.5" ></text>
+</g>
+<g >
+<title>nvGpuOpsFreeDupedHandle (111,106,238 samples, 0.20%)</title><rect x="34.1" y="197" width="2.4" height="15.0" fill="rgb(217,55,13)" rx="2" ry="2" />
+<text  x="37.09" y="207.5" ></text>
+</g>
+<g >
+<title>call_init (54,351,115,787 samples, 98.87%)</title><rect x="23.4" y="661" width="1166.6" height="15.0" fill="rgb(221,77,18)" rx="2" ry="2" />
+<text  x="26.36" y="671.5" >call_init</text>
+</g>
+<g >
+<title>_find_next_bit (55,553,433 samples, 0.10%)</title><rect x="1085.1" y="229" width="1.2" height="15.0" fill="rgb(230,116,27)" rx="2" ry="2" />
+<text  x="1088.09" y="239.5" ></text>
+</g>
+<g >
+<title>rmapiControlWithSecInfo (55,555,590 samples, 0.10%)</title><rect x="20.0" y="517" width="1.2" height="15.0" fill="rgb(235,142,34)" rx="2" ry="2" />
+<text  x="23.04" y="527.5" ></text>
+</g>
+<g >
+<title>uvm_unlocked_ioctl_entry (166,659,669 samples, 0.30%)</title><rect x="34.1" y="309" width="3.6" height="15.0" fill="rgb(227,104,24)" rx="2" ry="2" />
+<text  x="37.09" y="319.5" ></text>
+</g>
+<g >
+<title>[libwayland-client.so.0.24.0] (55,557,094 samples, 0.10%)</title><rect x="22.2" y="597" width="1.2" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="25.17" y="607.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,034,461 samples, 0.20%)</title><rect x="1187.6" y="565" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1190.62" y="575.5" ></text>
+</g>
+<g >
+<title>rmapiDupObjectWithSecInfo (111,098,055 samples, 0.20%)</title><rect x="37.7" y="165" width="2.4" height="15.0" fill="rgb(208,17,4)" rx="2" ry="2" />
+<text  x="40.67" y="175.5" ></text>
+</g>
+<g >
+<title>__nvoc_objCreateDynamic (55,554,408 samples, 0.10%)</title><rect x="43.6" y="149" width="1.2" height="15.0" fill="rgb(228,105,25)" rx="2" ry="2" />
+<text  x="46.63" y="159.5" ></text>
+</g>
+<g >
+<title>__nvoc_objCreate_VideoMemory (55,554,408 samples, 0.10%)</title><rect x="43.6" y="133" width="1.2" height="15.0" fill="rgb(205,4,1)" rx="2" ry="2" />
+<text  x="46.63" y="143.5" ></text>
+</g>
+<g >
+<title>__schedule (8,129,205 samples, 0.01%)</title><rect x="10.3" y="421" width="0.2" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="13.33" y="431.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (388,856,691 samples, 0.71%)</title><rect x="37.7" y="405" width="8.3" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="40.67" y="415.5" ></text>
+</g>
+<g >
+<title>__x64_sys_ioctl (277,762,385 samples, 0.51%)</title><rect x="31.7" y="325" width="6.0" height="15.0" fill="rgb(249,204,49)" rx="2" ry="2" />
+<text  x="34.71" y="335.5" ></text>
+</g>
+<g >
+<title>__x64_sys_ioctl (55,556,548 samples, 0.10%)</title><rect x="18.8" y="565" width="1.2" height="15.0" fill="rgb(249,204,49)" rx="2" ry="2" />
+<text  x="21.84" y="575.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (55,475,680 samples, 0.10%)</title><rect x="15.3" y="581" width="1.2" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="18.27" y="591.5" ></text>
+</g>
+<g >
+<title>tick_nohz_handler (55,548,102 samples, 0.10%)</title><rect x="1083.9" y="261" width="1.2" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="1086.89" y="271.5" ></text>
+</g>
+<g >
+<title>uvm_ext_gpu_map_free (111,106,238 samples, 0.20%)</title><rect x="34.1" y="229" width="2.4" height="15.0" fill="rgb(210,25,5)" rx="2" ry="2" />
+<text  x="37.09" y="239.5" ></text>
+</g>
+<g >
+<title>uvm_deferred_free_object_list (111,106,238 samples, 0.20%)</title><rect x="34.1" y="245" width="2.4" height="15.0" fill="rgb(210,27,6)" rx="2" ry="2" />
+<text  x="37.09" y="255.5" ></text>
+</g>
+<g >
+<title>serverAllocResource (55,554,408 samples, 0.10%)</title><rect x="43.6" y="213" width="1.2" height="15.0" fill="rgb(232,126,30)" rx="2" ry="2" />
+<text  x="46.63" y="223.5" ></text>
+</g>
+<g >
+<title>all (54,973,614,590 samples, 100%)</title><rect x="10.0" y="725" width="1180.0" height="15.0" fill="rgb(213,39,9)" rx="2" ry="2" />
+<text  x="13.00" y="735.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (19,169,327,342 samples, 34.87%)</title><rect x="673.6" y="373" width="411.5" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="676.62" y="383.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>portSyncRwLockAcquireWrite (55,552,611 samples, 0.10%)</title><rect x="35.3" y="133" width="1.2" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="38.29" y="143.5" ></text>
+</g>
+<g >
+<title>_tlsThreadEntryGetOrAlloc.part.0 (55,553,627 samples, 0.10%)</title><rect x="34.1" y="133" width="1.2" height="15.0" fill="rgb(241,165,39)" rx="2" ry="2" />
+<text  x="37.09" y="143.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,034,461 samples, 0.20%)</title><rect x="1187.6" y="517" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1190.62" y="527.5" ></text>
+</g>
+<g >
+<title>[libEGL_nvidia.so.595.84] (111,024,213 samples, 0.20%)</title><rect x="10.5" y="693" width="2.4" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="13.50" y="703.5" ></text>
+</g>
+<g >
+<title>tick_nohz_handler (55,553,433 samples, 0.10%)</title><rect x="1085.1" y="309" width="1.2" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="1088.09" y="319.5" ></text>
+</g>
+<g >
+<title>[libwayland-client.so.0.24.0] (55,552,835 samples, 0.10%)</title><rect x="23.4" y="581" width="1.2" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="26.36" y="591.5" ></text>
+</g>
+<g >
+<title>uvm_ext_gpu_map_destroy.part.0 (55,553,431 samples, 0.10%)</title><rect x="36.5" y="213" width="1.2" height="15.0" fill="rgb(244,182,43)" rx="2" ry="2" />
+<text  x="39.48" y="223.5" ></text>
+</g>
+<g >
+<title>update_process_times (55,553,433 samples, 0.10%)</title><rect x="1085.1" y="293" width="1.2" height="15.0" fill="rgb(250,209,50)" rx="2" ry="2" />
+<text  x="1088.09" y="303.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,034,461 samples, 0.20%)</title><rect x="1187.6" y="549" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1190.62" y="559.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (388,856,691 samples, 0.71%)</title><rect x="37.7" y="469" width="8.3" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="40.67" y="479.5" ></text>
+</g>
+<g >
+<title>threadStateAlloc (55,553,016 samples, 0.10%)</title><rect x="40.1" y="181" width="1.1" height="15.0" fill="rgb(245,184,44)" rx="2" ry="2" />
+<text  x="43.05" y="191.5" ></text>
+</g>
+<g >
+<title>libcudart_static_e760a7280bc1af45ef561886abc194823c5edadb (53,240,117,841 samples, 96.85%)</title><rect x="47.2" y="597" width="1142.8" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="50.21" y="607.5" >libcudart_static_e760a7280bc1af45ef561886abc194823c5edadb</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (277,762,385 samples, 0.51%)</title><rect x="31.7" y="517" width="6.0" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="34.71" y="527.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (277,762,385 samples, 0.51%)</title><rect x="31.7" y="469" width="6.0" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="34.71" y="479.5" ></text>
+</g>
+<g >
+<title>drm_ioctl_kernel (55,553,972 samples, 0.10%)</title><rect x="17.7" y="501" width="1.1" height="15.0" fill="rgb(226,101,24)" rx="2" ry="2" />
+<text  x="20.65" y="511.5" ></text>
+</g>
+<g >
+<title>_nvGpuOpsLocksAcquireWithClientLockFlags (111,106,238 samples, 0.20%)</title><rect x="34.1" y="181" width="2.4" height="15.0" fill="rgb(212,33,7)" rx="2" ry="2" />
+<text  x="37.09" y="191.5" ></text>
+</g>
+<g >
+<title>uvm_spin_loop (55,553,431 samples, 0.10%)</title><rect x="36.5" y="149" width="1.2" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="39.48" y="159.5" ></text>
+</g>
+<g >
+<title>drm_dev_enter (55,540,564 samples, 0.10%)</title><rect x="16.5" y="501" width="1.2" height="15.0" fill="rgb(237,150,35)" rx="2" ry="2" />
+<text  x="19.46" y="511.5" ></text>
+</g>
+<g >
+<title>__hrtimer_run_queues (55,548,102 samples, 0.10%)</title><rect x="1083.9" y="277" width="1.2" height="15.0" fill="rgb(237,150,35)" rx="2" ry="2" />
+<text  x="1086.89" y="287.5" ></text>
+</g>
+<g >
+<title>ffi_call (55,552,835 samples, 0.10%)</title><rect x="23.4" y="565" width="1.2" height="15.0" fill="rgb(242,171,41)" rx="2" ry="2" />
+<text  x="26.36" y="575.5" ></text>
+</g>
+<g >
+<title>nvRmApiControl (55,555,590 samples, 0.10%)</title><rect x="20.0" y="597" width="1.2" height="15.0" fill="rgb(224,88,21)" rx="2" ry="2" />
+<text  x="23.04" y="607.5" ></text>
+</g>
+<g >
+<title>hrtimer_interrupt (55,548,102 samples, 0.10%)</title><rect x="1083.9" y="293" width="1.2" height="15.0" fill="rgb(228,109,26)" rx="2" ry="2" />
+<text  x="1086.89" y="303.5" ></text>
+</g>
+<g >
+<title>consume_skb (55,530,045 samples, 0.10%)</title><rect x="24.6" y="389" width="1.1" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="27.55" y="399.5" ></text>
+</g>
+<g >
+<title>uvm_spin_loop (111,101,809 samples, 0.20%)</title><rect x="41.2" y="213" width="2.4" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="44.25" y="223.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (55,556,548 samples, 0.10%)</title><rect x="18.8" y="613" width="1.2" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="21.84" y="623.5" ></text>
+</g>
+<g >
+<title>[libglfw.so.3.4] (111,082,880 samples, 0.20%)</title><rect x="23.4" y="629" width="2.3" height="15.0" fill="rgb(208,15,3)" rx="2" ry="2" />
+<text  x="26.36" y="639.5" ></text>
+</g>
+<g >
+<title>Nv01FreeWithSecInfo (55,547,863 samples, 0.10%)</title><rect x="32.9" y="261" width="1.2" height="15.0" fill="rgb(229,112,27)" rx="2" ry="2" />
+<text  x="35.90" y="271.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (388,856,691 samples, 0.71%)</title><rect x="37.7" y="533" width="8.3" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="40.67" y="543.5" ></text>
+</g>
+<g >
+<title>resservResourceFactory (55,554,408 samples, 0.10%)</title><rect x="43.6" y="165" width="1.2" height="15.0" fill="rgb(208,16,4)" rx="2" ry="2" />
+<text  x="46.63" y="175.5" ></text>
+</g>
+<g >
+<title>libcudart_static_bf75d3fb4d1836f42a3c2a8a3f9a215f76cf2991 (55,551,701 samples, 0.10%)</title><rect x="46.0" y="597" width="1.2" height="15.0" fill="rgb(237,151,36)" rx="2" ry="2" />
+<text  x="49.02" y="607.5" ></text>
+</g>
+<g >
+<title>__srcu_read_lock (55,540,564 samples, 0.10%)</title><rect x="16.5" y="485" width="1.2" height="15.0" fill="rgb(227,102,24)" rx="2" ry="2" />
+<text  x="19.46" y="495.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (18,230,215 samples, 0.03%)</title><rect x="10.1" y="565" width="0.4" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="13.11" y="575.5" ></text>
+</g>
+<g >
+<title>__vdso_clock_gettime (55,553,806 samples, 0.10%)</title><rect x="1179.3" y="405" width="1.2" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="1182.27" y="415.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (277,762,385 samples, 0.51%)</title><rect x="31.7" y="421" width="6.0" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="34.71" y="431.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (388,856,691 samples, 0.71%)</title><rect x="37.7" y="437" width="8.3" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="40.67" y="447.5" ></text>
+</g>
+<g >
+<title>start_thread (23,280,720 samples, 0.04%)</title><rect x="10.0" y="677" width="0.5" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="13.00" y="687.5" ></text>
+</g>
+<g >
+<title>__raw_spin_lock_irqsave (5,050,505 samples, 0.01%)</title><rect x="10.1" y="453" width="0.1" height="15.0" fill="rgb(233,132,31)" rx="2" ry="2" />
+<text  x="13.11" y="463.5" ></text>
+</g>
+<g >
+<title>__syscall_cancel_arch (55,530,045 samples, 0.10%)</title><rect x="24.6" y="565" width="1.1" height="15.0" fill="rgb(239,157,37)" rx="2" ry="2" />
+<text  x="27.55" y="575.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (53,129,083,380 samples, 96.64%)</title><rect x="47.2" y="485" width="1140.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="50.21" y="495.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (111,094,536 samples, 0.20%)</title><rect x="16.5" y="597" width="2.3" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="19.46" y="607.5" ></text>
+</g>
+<g >
+<title>uvm_api_map_external_allocation (277,752,880 samples, 0.51%)</title><rect x="37.7" y="245" width="5.9" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="40.67" y="255.5" ></text>
+</g>
+<g >
+<title>sysvec_apic_timer_interrupt (55,548,102 samples, 0.10%)</title><rect x="1083.9" y="325" width="1.2" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="1086.89" y="335.5" ></text>
+</g>
+<g >
+<title>drmSyncobjImportSyncFile (55,556,548 samples, 0.10%)</title><rect x="18.8" y="661" width="1.2" height="15.0" fill="rgb(223,85,20)" rx="2" ry="2" />
+<text  x="21.84" y="671.5" ></text>
+</g>
+<g >
+<title>nvidia_unlocked_ioctl (55,547,863 samples, 0.10%)</title><rect x="32.9" y="309" width="1.2" height="15.0" fill="rgb(241,170,40)" rx="2" ry="2" />
+<text  x="35.90" y="319.5" ></text>
+</g>
+<g >
+<title>sched_balance_trigger (55,548,102 samples, 0.10%)</title><rect x="1083.9" y="213" width="1.2" height="15.0" fill="rgb(213,38,9)" rx="2" ry="2" />
+<text  x="1086.89" y="223.5" ></text>
+</g>
+<g >
+<title>skb_release_data (55,530,045 samples, 0.10%)</title><rect x="24.6" y="373" width="1.1" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="27.55" y="383.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (277,752,880 samples, 0.51%)</title><rect x="37.7" y="389" width="5.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="40.67" y="399.5" ></text>
+</g>
+<g >
+<title>sock_recvmsg (55,530,045 samples, 0.10%)</title><rect x="24.6" y="437" width="1.1" height="15.0" fill="rgb(206,5,1)" rx="2" ry="2" />
+<text  x="27.55" y="447.5" ></text>
+</g>
+<g >
+<title>[libEGL_nvidia.so.595.84] (55,475,680 samples, 0.10%)</title><rect x="15.3" y="645" width="1.2" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="18.27" y="655.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (111,103,811 samples, 0.20%)</title><rect x="43.6" y="341" width="2.4" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="46.63" y="351.5" ></text>
+</g>
+<g >
+<title>down_write (55,552,611 samples, 0.10%)</title><rect x="35.3" y="101" width="1.2" height="15.0" fill="rgb(222,79,18)" rx="2" ry="2" />
+<text  x="38.29" y="111.5" ></text>
+</g>
+<g >
+<title>[unknown] (377,085,243 samples, 0.69%)</title><rect x="15.3" y="693" width="8.1" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="18.27" y="703.5" ></text>
+</g>
+<g >
+<title>__poll (18,230,215 samples, 0.03%)</title><rect x="10.1" y="613" width="0.4" height="15.0" fill="rgb(250,208,49)" rx="2" ry="2" />
+<text  x="13.11" y="623.5" ></text>
+</g>
+<g >
+<title>serverCopyResource (111,098,055 samples, 0.20%)</title><rect x="37.7" y="149" width="2.4" height="15.0" fill="rgb(249,203,48)" rx="2" ry="2" />
+<text  x="40.67" y="159.5" ></text>
+</g>
+<g >
+<title>drm_ioctl (55,556,548 samples, 0.10%)</title><rect x="18.8" y="533" width="1.2" height="15.0" fill="rgb(231,121,29)" rx="2" ry="2" />
+<text  x="21.84" y="543.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (277,752,880 samples, 0.51%)</title><rect x="37.7" y="357" width="5.9" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="40.67" y="367.5" ></text>
+</g>
+<g >
+<title>unix_stream_recvmsg (55,530,045 samples, 0.10%)</title><rect x="24.6" y="421" width="1.1" height="15.0" fill="rgb(251,213,51)" rx="2" ry="2" />
+<text  x="27.55" y="431.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (388,856,691 samples, 0.71%)</title><rect x="37.7" y="453" width="8.3" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="40.67" y="463.5" ></text>
+</g>
+<g >
+<title>stars (54,950,333,870 samples, 99.96%)</title><rect x="10.5" y="709" width="1179.5" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="13.50" y="719.5" >stars</text>
+</g>
+<g >
+<title>arch_scale_cpu_capacity (55,548,102 samples, 0.10%)</title><rect x="1083.9" y="197" width="1.2" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="1086.89" y="207.5" ></text>
+</g>
+<g >
+<title>_rmapiRmControl (55,555,590 samples, 0.10%)</title><rect x="20.0" y="501" width="1.2" height="15.0" fill="rgb(236,143,34)" rx="2" ry="2" />
+<text  x="23.04" y="511.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (388,856,691 samples, 0.71%)</title><rect x="37.7" y="421" width="8.3" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="40.67" y="431.5" ></text>
+</g>
+<g >
+<title>rmclientFreeResource_IMPL (55,547,863 samples, 0.10%)</title><rect x="32.9" y="181" width="1.2" height="15.0" fill="rgb(234,137,32)" rx="2" ry="2" />
+<text  x="35.90" y="191.5" ></text>
+</g>
+<g >
+<title>uvm_va_range_destroy (55,553,431 samples, 0.10%)</title><rect x="36.5" y="245" width="1.2" height="15.0" fill="rgb(244,180,43)" rx="2" ry="2" />
+<text  x="39.48" y="255.5" ></text>
+</g>
+<g >
+<title>poll_schedule_timeout.constprop.0 (8,129,205 samples, 0.01%)</title><rect x="10.3" y="485" width="0.2" height="15.0" fill="rgb(220,73,17)" rx="2" ry="2" />
+<text  x="13.33" y="495.5" ></text>
+</g>
+<g >
+<title>completion_done (5,050,505 samples, 0.01%)</title><rect x="10.2" y="469" width="0.1" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="13.22" y="479.5" ></text>
+</g>
+<g >
+<title>dput.part.0 (55,475,680 samples, 0.10%)</title><rect x="15.3" y="485" width="1.2" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="18.27" y="495.5" ></text>
+</g>
+<g >
+<title>uvm_map_external_allocation_on_gpu (166,651,071 samples, 0.30%)</title><rect x="37.7" y="229" width="3.5" height="15.0" fill="rgb(235,139,33)" rx="2" ry="2" />
+<text  x="40.67" y="239.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (388,856,691 samples, 0.71%)</title><rect x="37.7" y="565" width="8.3" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="40.67" y="575.5" ></text>
+</g>
+<g >
+<title>_start (54,351,115,787 samples, 98.87%)</title><rect x="23.4" y="693" width="1166.6" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="26.36" y="703.5" >_start</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (277,762,385 samples, 0.51%)</title><rect x="31.7" y="581" width="6.0" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="34.71" y="591.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,034,461 samples, 0.20%)</title><rect x="1187.6" y="437" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1190.62" y="447.5" ></text>
+</g>
+<g >
+<title>skb_free_head (55,530,045 samples, 0.10%)</title><rect x="24.6" y="357" width="1.1" height="15.0" fill="rgb(221,77,18)" rx="2" ry="2" />
+<text  x="27.55" y="367.5" ></text>
+</g>
+<g >
+<title>rm_ioctl (55,547,863 samples, 0.10%)</title><rect x="32.9" y="293" width="1.2" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="35.90" y="303.5" ></text>
+</g>
+<g >
+<title>rmapiFreeWithSecInfo (55,547,863 samples, 0.10%)</title><rect x="32.9" y="229" width="1.2" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="35.90" y="239.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (277,762,385 samples, 0.51%)</title><rect x="31.7" y="405" width="6.0" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="34.71" y="415.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (277,762,385 samples, 0.51%)</title><rect x="31.7" y="373" width="6.0" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="34.71" y="383.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (111,103,811 samples, 0.20%)</title><rect x="43.6" y="357" width="2.4" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="46.63" y="367.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (277,752,880 samples, 0.51%)</title><rect x="37.7" y="341" width="5.9" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="40.67" y="351.5" ></text>
+</g>
+<g >
+<title>[libnvidia-egl-wayland2.so.1.0.1] (166,651,084 samples, 0.30%)</title><rect x="16.5" y="677" width="3.5" height="15.0" fill="rgb(244,181,43)" rx="2" ry="2" />
+<text  x="19.46" y="687.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (277,762,385 samples, 0.51%)</title><rect x="31.7" y="341" width="6.0" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="34.71" y="351.5" ></text>
+</g>
+<g >
+<title>__x64_sys_recvmsg (55,530,045 samples, 0.10%)</title><rect x="24.6" y="501" width="1.1" height="15.0" fill="rgb(228,107,25)" rx="2" ry="2" />
+<text  x="27.55" y="511.5" ></text>
+</g>
+<g >
+<title>_clientAllocResourceHelper (55,553,253 samples, 0.10%)</title><rect x="37.7" y="117" width="1.2" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="40.67" y="127.5" ></text>
+</g>
+<g >
+<title>wl_proxy_marshal_array_flags (55,557,094 samples, 0.10%)</title><rect x="22.2" y="613" width="1.2" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="25.17" y="623.5" ></text>
+</g>
+<g >
+<title>display_loop (111,082,880 samples, 0.20%)</title><rect x="23.4" y="645" width="2.3" height="15.0" fill="rgb(247,197,47)" rx="2" ry="2" />
+<text  x="26.36" y="655.5" ></text>
+</g>
+<g >
+<title>[libnvidia-eglcore.so.595.84] (55,555,590 samples, 0.10%)</title><rect x="20.0" y="677" width="1.2" height="15.0" fill="rgb(210,23,5)" rx="2" ry="2" />
+<text  x="23.04" y="687.5" ></text>
+</g>
+<g >
+<title>uvm_ext_gpu_map_destroy (55,553,431 samples, 0.10%)</title><rect x="36.5" y="229" width="1.2" height="15.0" fill="rgb(234,137,32)" rx="2" ry="2" />
+<text  x="39.48" y="239.5" ></text>
+</g>
+<g >
+<title>hrtimer_interrupt (55,553,433 samples, 0.10%)</title><rect x="1085.1" y="341" width="1.2" height="15.0" fill="rgb(228,109,26)" rx="2" ry="2" />
+<text  x="1088.09" y="351.5" ></text>
+</g>
+<g >
+<title>drain_obj_stock (55,475,680 samples, 0.10%)</title><rect x="15.3" y="373" width="1.2" height="15.0" fill="rgb(213,38,9)" rx="2" ry="2" />
+<text  x="18.27" y="383.5" ></text>
+</g>
+<g >
+<title>cuMemAlloc_v2 (388,856,691 samples, 0.71%)</title><rect x="37.7" y="581" width="8.3" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="40.67" y="591.5" ></text>
+</g>
+<g >
+<title>kmem_cache_free (55,475,680 samples, 0.10%)</title><rect x="15.3" y="421" width="1.2" height="15.0" fill="rgb(254,225,53)" rx="2" ry="2" />
+<text  x="18.27" y="431.5" ></text>
+</g>
+<g >
+<title>libcudart_static_c64d4787e94fe64d8e27ede30dfe20c11b592bde (277,762,385 samples, 0.51%)</title><rect x="31.7" y="613" width="6.0" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="34.71" y="623.5" ></text>
+</g>
+<g >
+<title>_portMemAllocNonPagedUntracked (55,553,627 samples, 0.10%)</title><rect x="34.1" y="101" width="1.2" height="15.0" fill="rgb(207,12,3)" rx="2" ry="2" />
+<text  x="37.09" y="111.5" ></text>
+</g>
+<g >
+<title>drm_ioctl (111,094,536 samples, 0.20%)</title><rect x="16.5" y="517" width="2.3" height="15.0" fill="rgb(231,121,29)" rx="2" ry="2" />
+<text  x="19.46" y="527.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (53,129,083,380 samples, 96.64%)</title><rect x="47.2" y="533" width="1140.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="50.21" y="543.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>uvm_unlocked_ioctl_entry (55,549,403 samples, 0.10%)</title><rect x="44.8" y="309" width="1.2" height="15.0" fill="rgb(227,104,24)" rx="2" ry="2" />
+<text  x="47.82" y="319.5" ></text>
+</g>
+<g >
+<title>__x64_sys_ioctl (111,103,811 samples, 0.20%)</title><rect x="43.6" y="325" width="2.4" height="15.0" fill="rgb(249,204,49)" rx="2" ry="2" />
+<text  x="46.63" y="335.5" ></text>
+</g>
+<g >
+<title>wl_display_dispatch_queue_pending (55,552,835 samples, 0.10%)</title><rect x="23.4" y="597" width="1.2" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="26.36" y="607.5" ></text>
+</g>
+<g >
+<title>tlsEntryAcquire (55,553,627 samples, 0.10%)</title><rect x="34.1" y="149" width="1.2" height="15.0" fill="rgb(237,149,35)" rx="2" ry="2" />
+<text  x="37.09" y="159.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (111,094,536 samples, 0.20%)</title><rect x="16.5" y="581" width="2.3" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="19.46" y="591.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (5,050,505 samples, 0.01%)</title><rect x="10.1" y="469" width="0.1" height="15.0" fill="rgb(247,195,46)" rx="2" ry="2" />
+<text  x="13.11" y="479.5" ></text>
+</g>
+<g >
+<title>drm_ioctl_kernel (55,556,548 samples, 0.10%)</title><rect x="18.8" y="517" width="1.2" height="15.0" fill="rgb(226,101,24)" rx="2" ry="2" />
+<text  x="21.84" y="527.5" ></text>
+</g>
+<g >
+<title>libcudart_static_901c335edfe2e89188fa6b8fe3e2a2194ad05bff (53,240,117,841 samples, 96.85%)</title><rect x="47.2" y="613" width="1142.8" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="50.21" y="623.5" >libcudart_static_901c335edfe2e89188fa6b8fe3e2a2194ad05bff</text>
+</g>
+<g >
+<title>____sys_recvmsg (55,530,045 samples, 0.10%)</title><rect x="24.6" y="453" width="1.1" height="15.0" fill="rgb(224,90,21)" rx="2" ry="2" />
+<text  x="27.55" y="463.5" ></text>
+</g>
+<g >
+<title>rmapiAllocWithSecInfo (55,554,408 samples, 0.10%)</title><rect x="43.6" y="229" width="1.2" height="15.0" fill="rgb(225,92,22)" rx="2" ry="2" />
+<text  x="46.63" y="239.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (277,762,385 samples, 0.51%)</title><rect x="31.7" y="533" width="6.0" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="34.71" y="543.5" ></text>
+</g>
+<g >
+<title>___sys_recvmsg (55,530,045 samples, 0.10%)</title><rect x="24.6" y="469" width="1.1" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="27.55" y="479.5" ></text>
+</g>
+<g >
+<title>refill_obj_stock (55,475,680 samples, 0.10%)</title><rect x="15.3" y="389" width="1.2" height="15.0" fill="rgb(239,160,38)" rx="2" ry="2" />
+<text  x="18.27" y="399.5" ></text>
+</g>
+<g >
+<title>__ioctl (111,103,811 samples, 0.20%)</title><rect x="43.6" y="389" width="2.4" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="46.63" y="399.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (5,050,505 samples, 0.01%)</title><rect x="10.0" y="613" width="0.1" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="13.00" y="623.5" ></text>
+</g>
+<g >
+<title>sched_tick (55,548,102 samples, 0.10%)</title><rect x="1083.9" y="229" width="1.2" height="15.0" fill="rgb(238,155,37)" rx="2" ry="2" />
+<text  x="1086.89" y="239.5" ></text>
+</g>
+<g >
+<title>__x64_sys_ioctl (111,094,536 samples, 0.20%)</title><rect x="16.5" y="549" width="2.3" height="15.0" fill="rgb(249,204,49)" rx="2" ry="2" />
+<text  x="19.46" y="559.5" ></text>
+</g>
+<g >
+<title>serverFreeResourceTreeUnderLock (55,547,863 samples, 0.10%)</title><rect x="32.9" y="197" width="1.2" height="15.0" fill="rgb(243,177,42)" rx="2" ry="2" />
+<text  x="35.90" y="207.5" ></text>
+</g>
+<g >
+<title>wl_display_read_events (55,530,045 samples, 0.10%)</title><rect x="24.6" y="597" width="1.1" height="15.0" fill="rgb(228,105,25)" rx="2" ry="2" />
+<text  x="27.55" y="607.5" ></text>
+</g>
+<g >
+<title>pmaAllocatePages (55,554,408 samples, 0.10%)</title><rect x="43.6" y="101" width="1.2" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="46.63" y="111.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (53,129,083,380 samples, 96.64%)</title><rect x="47.2" y="501" width="1140.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="50.21" y="511.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (53,129,083,380 samples, 96.64%)</title><rect x="47.2" y="437" width="1140.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="50.21" y="447.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>drmIoctl (111,094,536 samples, 0.20%)</title><rect x="16.5" y="629" width="2.3" height="15.0" fill="rgb(251,215,51)" rx="2" ry="2" />
+<text  x="19.46" y="639.5" ></text>
+</g>
+<g >
+<title>__sysvec_apic_timer_interrupt (55,553,433 samples, 0.10%)</title><rect x="1085.1" y="357" width="1.2" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="1088.09" y="367.5" ></text>
+</g>
+<g >
+<title>portMemFree (55,547,863 samples, 0.10%)</title><rect x="32.9" y="37" width="1.2" height="15.0" fill="rgb(239,159,38)" rx="2" ry="2" />
+<text  x="35.90" y="47.5" ></text>
+</g>
+<g >
+<title>[unknown] (99,402,889 samples, 0.18%)</title><rect x="21.2" y="677" width="2.2" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="24.23" y="687.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (55,530,045 samples, 0.10%)</title><rect x="24.6" y="533" width="1.1" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="27.55" y="543.5" ></text>
+</g>
+<g >
+<title>clientCopyResource_IMPL (55,553,253 samples, 0.10%)</title><rect x="37.7" y="133" width="1.2" height="15.0" fill="rgb(213,41,9)" rx="2" ry="2" />
+<text  x="40.67" y="143.5" ></text>
+</g>
+<g >
+<title>rmapiAllocWithSecInfoTls (55,554,408 samples, 0.10%)</title><rect x="43.6" y="245" width="1.2" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="46.63" y="255.5" ></text>
+</g>
+<g >
+<title>drm_syncobj_array_wait_timeout.constprop.0 (55,553,972 samples, 0.10%)</title><rect x="17.7" y="453" width="1.1" height="15.0" fill="rgb(211,29,7)" rx="2" ry="2" />
+<text  x="20.65" y="463.5" ></text>
+</g>
+<g >
+<title>uvm_unlocked_ioctl_entry (277,752,880 samples, 0.51%)</title><rect x="37.7" y="293" width="5.9" height="15.0" fill="rgb(227,104,24)" rx="2" ry="2" />
+<text  x="40.67" y="303.5" ></text>
+</g>
+<g >
+<title>__x64_sys_ioctl (277,752,880 samples, 0.51%)</title><rect x="37.7" y="309" width="5.9" height="15.0" fill="rgb(249,204,49)" rx="2" ry="2" />
+<text  x="40.67" y="319.5" ></text>
+</g>
+<g >
+<title>__memcg_slab_free_hook (55,530,045 samples, 0.10%)</title><rect x="24.6" y="325" width="1.1" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="27.55" y="335.5" ></text>
+</g>
+<g >
+<title>fput_close_sync (55,475,680 samples, 0.10%)</title><rect x="15.3" y="533" width="1.2" height="15.0" fill="rgb(224,89,21)" rx="2" ry="2" />
+<text  x="18.27" y="543.5" ></text>
+</g>
+<g >
+<title>cudaMemcpy (53,240,117,841 samples, 96.85%)</title><rect x="47.2" y="629" width="1142.8" height="15.0" fill="rgb(246,192,46)" rx="2" ry="2" />
+<text  x="50.21" y="639.5" >cudaMemcpy</text>
+</g>
+<g >
+<title>RmIoctl (55,547,863 samples, 0.10%)</title><rect x="32.9" y="277" width="1.2" height="15.0" fill="rgb(254,227,54)" rx="2" ry="2" />
+<text  x="35.90" y="287.5" ></text>
+</g>
+<g >
+<title>sched_balance_trigger (55,553,433 samples, 0.10%)</title><rect x="1085.1" y="261" width="1.2" height="15.0" fill="rgb(213,38,9)" rx="2" ry="2" />
+<text  x="1088.09" y="271.5" ></text>
+</g>
+<g >
+<title>cudaMalloc (444,408,392 samples, 0.81%)</title><rect x="37.7" y="629" width="9.5" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="40.67" y="639.5" ></text>
+</g>
+<g >
+<title>sched_tick (55,553,433 samples, 0.10%)</title><rect x="1085.1" y="277" width="1.2" height="15.0" fill="rgb(238,155,37)" rx="2" ry="2" />
+<text  x="1088.09" y="287.5" ></text>
+</g>
+<g >
+<title>[libwayland-client.so.0.24.0] (43,845,795 samples, 0.08%)</title><rect x="21.2" y="613" width="1.0" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="24.23" y="623.5" ></text>
+</g>
+<g >
+<title>libcudart_static_f74e2f2bcf2cf49bd1a61332e1d15bd1e748f9cf (444,408,392 samples, 0.81%)</title><rect x="37.7" y="613" width="9.5" height="15.0" fill="rgb(252,220,52)" rx="2" ry="2" />
+<text  x="40.67" y="623.5" ></text>
+</g>
+<g >
+<title>os_alloc_mem (55,553,627 samples, 0.10%)</title><rect x="34.1" y="85" width="1.2" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="37.09" y="95.5" ></text>
+</g>
+<g >
+<title>vidmemPmaFree (55,547,863 samples, 0.10%)</title><rect x="32.9" y="85" width="1.2" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="35.90" y="95.5" ></text>
+</g>
+<g >
+<title>__close (55,475,680 samples, 0.10%)</title><rect x="15.3" y="629" width="1.2" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="18.27" y="639.5" ></text>
+</g>
+<g >
+<title>[libglfw.so.3.4] (111,082,880 samples, 0.20%)</title><rect x="23.4" y="613" width="2.3" height="15.0" fill="rgb(208,15,3)" rx="2" ry="2" />
+<text  x="26.36" y="623.5" ></text>
+</g>
+<g >
+<title>asm_sysvec_apic_timer_interrupt (55,548,102 samples, 0.10%)</title><rect x="1083.9" y="341" width="1.2" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="1086.89" y="351.5" ></text>
+</g>
+<g >
+<title>update_process_times (55,548,102 samples, 0.10%)</title><rect x="1083.9" y="245" width="1.2" height="15.0" fill="rgb(250,209,50)" rx="2" ry="2" />
+<text  x="1086.89" y="255.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (53,129,083,380 samples, 96.64%)</title><rect x="47.2" y="549" width="1140.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="50.21" y="559.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>__nvoc_dtor_VideoMemory (55,547,863 samples, 0.10%)</title><rect x="32.9" y="133" width="1.2" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="35.90" y="143.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (277,762,385 samples, 0.51%)</title><rect x="31.7" y="565" width="6.0" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="34.71" y="575.5" ></text>
+</g>
+<g >
+<title>__x64_sys_poll (18,230,215 samples, 0.03%)</title><rect x="10.1" y="533" width="0.4" height="15.0" fill="rgb(245,186,44)" rx="2" ry="2" />
+<text  x="13.11" y="543.5" ></text>
+</g>
+<g >
+<title>[unknown] (55,555,590 samples, 0.10%)</title><rect x="20.0" y="661" width="1.2" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="23.04" y="671.5" ></text>
+</g>
+<g >
+<title>serverAcquireClient (55,552,611 samples, 0.10%)</title><rect x="35.3" y="165" width="1.2" height="15.0" fill="rgb(247,193,46)" rx="2" ry="2" />
+<text  x="38.29" y="175.5" ></text>
+</g>
+<g >
+<title>_portMemAllocatorAlloc (55,553,627 samples, 0.10%)</title><rect x="34.1" y="117" width="1.2" height="15.0" fill="rgb(246,190,45)" rx="2" ry="2" />
+<text  x="37.09" y="127.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,034,461 samples, 0.20%)</title><rect x="1187.6" y="533" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1190.62" y="543.5" ></text>
+</g>
+<g >
+<title>drmIoctl (55,556,548 samples, 0.10%)</title><rect x="18.8" y="645" width="1.2" height="15.0" fill="rgb(251,215,51)" rx="2" ry="2" />
+<text  x="21.84" y="655.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (277,752,880 samples, 0.51%)</title><rect x="37.7" y="325" width="5.9" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="40.67" y="335.5" ></text>
+</g>
+<g >
+<title>schedule_hrtimeout_range (8,129,205 samples, 0.01%)</title><rect x="10.3" y="469" width="0.2" height="15.0" fill="rgb(221,75,18)" rx="2" ry="2" />
+<text  x="13.33" y="479.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (53,129,083,380 samples, 96.64%)</title><rect x="47.2" y="565" width="1140.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="50.21" y="575.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>x64_sys_call (55,556,548 samples, 0.10%)</title><rect x="18.8" y="581" width="1.2" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="21.84" y="591.5" ></text>
+</g>
+<g >
+<title>[unknown] (99,402,889 samples, 0.18%)</title><rect x="21.2" y="661" width="2.2" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="24.23" y="671.5" ></text>
+</g>
+<g >
+<title>clientFreeResource_IMPL (55,547,863 samples, 0.10%)</title><rect x="32.9" y="165" width="1.2" height="15.0" fill="rgb(225,94,22)" rx="2" ry="2" />
+<text  x="35.90" y="175.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (53,129,083,380 samples, 96.64%)</title><rect x="47.2" y="469" width="1140.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="50.21" y="479.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>cuMemcpyDtoH_v2 (53,129,083,380 samples, 96.64%)</title><rect x="47.2" y="581" width="1140.4" height="15.0" fill="rgb(249,206,49)" rx="2" ry="2" />
+<text  x="50.21" y="591.5" >cuMemcpyDtoH_v2</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (277,762,385 samples, 0.51%)</title><rect x="31.7" y="485" width="6.0" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="34.71" y="495.5" ></text>
+</g>
+<g >
+<title>unix_stream_read_generic (55,530,045 samples, 0.10%)</title><rect x="24.6" y="405" width="1.1" height="15.0" fill="rgb(244,180,43)" rx="2" ry="2" />
+<text  x="27.55" y="415.5" ></text>
+</g>
+<g >
+<title>drmSyncobjTimelineWait (111,094,536 samples, 0.20%)</title><rect x="16.5" y="645" width="2.3" height="15.0" fill="rgb(241,167,40)" rx="2" ry="2" />
+<text  x="19.46" y="655.5" ></text>
+</g>
+</g>
+</svg>

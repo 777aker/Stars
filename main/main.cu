@@ -5,14 +5,17 @@
 #include <vector>
 #include <random>
 #include <thread>
+#include "cuda.h"
+#include "cuda_gl_interop.h"
 
-std::vector<Point> points = {};
+Point *points;
 std::vector<Point> grid[mydim][mydim] = {};
 bool pausephysics = false;
 bool step = false;
 int GPUThreadsPerBlock = -1;
 #define NUM_THREADS 1024
 #define NUM_BLOCKS 1
+#define NUM_POINTS (NUM_BLOCKS * NUM_THREADS)
 
 /**
  * @brief respond to key pressed
@@ -42,82 +45,69 @@ void key(GLFWwindow *windowobj, int key, [[maybe_unused]] int scancode, int acti
 	}
 }
 
-__global__ void bruteForce(Point points[], float outputv[])
+__global__ void bruteForce(Point points[])
 {
 	unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
-	Point mypoint = points[tid];
-	// for (int i = 0; i < NUM_BLOCKS * NUM_THREADS; i++)
-	// {
-	// 	Point other = points[i];
-	// 	glm::vec2 pos(mypoint.x, mypoint.y);
-	// 	glm::vec2 otherpos(other.x, other.y);
-	// 	float d = glm::distance(pos, otherpos);
-	// 	if (d < 1.0f)
-	// 	{
-	// 		continue;
-	// 	}
-	// 	glm::vec2 dir = otherpos - pos;
-	// 	dir = glm::normalize(dir);
-	// 	if (d > 2.0f)
-	// 	{
-	// 		mypoint.nextv += 1 / (d * d * d) * dir * 0.001f;
-	// 		continue;
-	// 	}
-	// 	if (glm::dot(dir, other.velocity - mypoint.velocity) > 0.0f)
-	// 	{
-	// 		continue;
-	// 	}
-	// 	glm::vec2 otherdir = glm::normalize(pos - otherpos);
-	// 	mypoint.nextv -= dir * glm::dot(dir, mypoint.velocity) * 0.8f;
-	// 	mypoint.nextv += otherdir * glm::dot(otherdir, other.velocity) * 0.8f;
-	// }
-	outputv[tid * 2 + 0] = mypoint.nextv.x;
-	outputv[tid * 2 + 1] = mypoint.nextv.y;
+	for (int i = 0; i < NUM_BLOCKS * NUM_THREADS; i++)
+	{
+		Point other = points[i];
+		glm::vec2 pos(points[tid].x, points[tid].y);
+		glm::vec2 otherpos(other.x, other.y);
+		float d = glm::distance(pos, otherpos);
+		if (d < 1.0f)
+		{
+			continue;
+		}
+		glm::vec2 dir = otherpos - pos;
+		dir = glm::normalize(dir);
+		if (d > 2.0f)
+		{
+			points[tid].nextv += 1 / (d * d * d) * dir * 0.001f;
+			continue;
+		}
+		if (glm::dot(dir, other.velocity - points[tid].velocity) > 0.0f)
+		{
+			continue;
+		}
+		glm::vec2 otherdir = glm::normalize(pos - otherpos);
+		points[tid].nextv -= dir * glm::dot(dir, points[tid].velocity) * 0.8f;
+		points[tid].nextv += otherdir * glm::dot(otherdir, other.velocity) * 0.8f;
+		points[tid].r += 0.0001f;
+		points[tid].g += 0.05f;
+		points[tid].b -= 0.00001f;
+	}
 }
 
 // do the physics step
 void do_physics()
 {
 	Point *cuda_points;
-	if (cudaMalloc((void **)&cuda_points, points.size() * sizeof(Point)))
+	if (cudaMalloc((void **)&cuda_points, NUM_POINTS * sizeof(Point)))
 	{
 		printf("Could not allocate point memory\n");
 		return;
 	}
-	if (cudaMemcpy(cuda_points, &points, points.size() * sizeof(Point), cudaMemcpyHostToDevice))
+	if (cudaMemcpy(cuda_points, points, NUM_POINTS * sizeof(Point), cudaMemcpyHostToDevice))
 	{
 		printf("Couldn't copy point memory\n");
-		return;
-	}
-	float *cuda_velocities;
-	if (cudaMalloc((void **)&cuda_velocities, points.size() * 2 * sizeof(float)))
-	{
-		printf("Could not allocate velocity memory\n");
 		return;
 	}
 
 	dim3 threads(NUM_THREADS, 1);
 	dim3 grid(NUM_BLOCKS, 1);
-	bruteForce<<<grid, threads>>>(cuda_points, cuda_velocities);
+	bruteForce<<<grid, threads>>>(cuda_points);
 
-	float *new_velocities = (float *)malloc(points.size() * 2 * sizeof(float));
-	if (cudaMemcpy(new_velocities, cuda_velocities, points.size() * 2 * sizeof(float), cudaMemcpyDeviceToHost))
+	if (cudaMemcpy(points, cuda_points, NUM_POINTS * sizeof(Point), cudaMemcpyDeviceToHost))
 	{
-		printf("Couldn't copy velocity memory\n");
+		printf("Couldn't copy point memory\n");
 		return;
 	}
-	for (int i = 0; i < points.size(); i++)
-	{
-		points[i].nextv = glm::vec2(new_velocities[i * 2], new_velocities[i * 2 + 1]);
-	}
 	cudaFree(cuda_points);
-	cudaFree(cuda_velocities);
-	free(new_velocities);
 
 	// move every point
-	for (Point &point : points)
+	for (int i = 0; i < NUM_POINTS; i++)
 	{
-		point.doPhysics(asp);
+		points[i].doPhysics(asp);
 	}
 }
 
@@ -128,13 +118,31 @@ void draw_points()
 	// assumes screen size is 1000px
 	glPointSize(1000.0f / dim);
 	// use efficient memory arrays to draw color and position
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glEnableClientState(GL_COLOR_ARRAY);
-	glVertexPointer(2, GL_FLOAT, sizeof(Point), &points[0].x);
-	glColorPointer(3, GL_FLOAT, sizeof(Point), &points[0].r);
-	glDrawArrays(GL_POINTS, 0, points.size());
-	glDisableClientState(GL_VERTEX_ARRAY);
-	glDisableClientState(GL_COLOR_ARRAY);
+	unsigned int VAO, VBO;
+	glGenVertexArrays(1, &VAO);
+	glBindVertexArray(VAO);
+	glGenBuffers(1, &VBO);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBufferData(GL_ARRAY_BUFFER, NUM_POINTS * sizeof(Point), points, GL_DYNAMIC_DRAW);
+	struct cudaGraphicsResource *cuda_vbo_resource;
+	cudaGraphicsGLRegisterBuffer(&cuda_vbo_resource, VBO, cudaGraphicsRegisterFlagsWriteDiscard);
+
+	cudaGraphicsMapResources(1, &cuda_vbo_resource, 0);
+	Point *point_ptr;
+	size_t num_bytes = NUM_POINTS * sizeof(Point);
+	cudaGraphicsResourceGetMappedPointer((void **)&point_ptr, &num_bytes, cuda_vbo_resource);
+	bruteForce<<<NUM_BLOCKS, NUM_THREADS>>>(point_ptr);
+	cudaDeviceSynchronize();
+	cudaGraphicsUnmapResources(1, &cuda_vbo_resource, 0);
+
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Point), (void *)0);
+	glEnableVertexAttribArray(0);
+	glBindVertexArray(VAO);
+	glDrawArrays(GL_POINTS, 0, NUM_POINTS);
+
+	cudaGraphicsUnregisterResource(cuda_vbo_resource);
+	glDeleteVertexArrays(1, &VAO);
+	glDeleteBuffers(1, &VBO);
 }
 
 /**
@@ -153,7 +161,7 @@ void display_loop(Window *windowobj)
 		glRasterPos2i(-dim * asp + 0.05 * dim, dim - 0.05 * dim);
 		Print("FPS=%d", windowobj->FramesPerSecond());
 		glRasterPos2i(-dim * asp + 0.05 * dim, dim - 0.05 * dim - 0.02 * dim);
-		Print("Particles=%d", points.size());
+		Print("Particles=%d", NUM_POINTS);
 
 		if (!pausephysics || step)
 		{
@@ -174,6 +182,7 @@ void display_loop(Window *windowobj)
 		// get key board events
 		glfwPollEvents();
 	}
+	free(points);
 }
 
 // stuff we initialize
@@ -181,17 +190,18 @@ void init_stuff()
 {
 	GPUThreadsPerBlock = InitGPU(1);
 
+	points = (Point *)malloc(NUM_POINTS * sizeof(Point));
 	std::mt19937 rng(1234);
 	std::uniform_int_distribution<int32_t> dim_dist(-dim, dim);
 #define P_SPEED 0.005f
 	std::normal_distribution<float> v_dist(P_SPEED, P_SPEED / 2.0f);
-	for (int i = 0; i < NUM_BLOCKS * NUM_THREADS; i++)
+	for (int i = 0; i < NUM_POINTS; i++)
 	{
-		points.push_back(std::move(Point{
+		points[i] = std::move(Point{
 			(float)(dim_dist(rng) * asp),
 			(float)dim_dist(rng),
 			glm::vec2((float)v_dist(rng) - P_SPEED,
-					  (float)v_dist(rng) - P_SPEED)}));
+					  (float)v_dist(rng) - P_SPEED)});
 	}
 	// for testing collision logic
 	// points.push_back(std::move(Point{

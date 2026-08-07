@@ -19,12 +19,7 @@ endif
 
 all: main.o InitGPUcu.o
 
-main.o: main.cu point.hpp InitGPUcu.hpp
-InitGPUcu.o: InitGPUcu.cu InitGPUcu.hpp
-
-.SUFFIXES: .c .cpp .cu
-.cu.o:
-	nvcc -O3 -c -Xcompiler -Wall $<
+main.o: main.cpp point.hpp tree.hpp
 
 .cpp.o:
 	g++ -c $(CFLG) -I /usr/include/opencv4 $<

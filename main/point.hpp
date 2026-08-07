@@ -40,7 +40,7 @@ public:
         }
         if (d > 2.0f)
         {
-            nextv += 1 / (d * d * d) * dir * 0.001f;
+            // nextv += 1 / (d * d * d) * dir * 0.001f;
             return;
         }
         // if we're moving apart we've already solved for collision abort
@@ -60,7 +60,7 @@ public:
     }
 
     // really this just moves the points
-    void doPhysics(float asp)
+    void doPhysics(float dim, float asp)
     {
         // keep points in bounds
         if (x < -dim * asp)

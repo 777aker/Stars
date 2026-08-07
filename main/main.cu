@@ -14,8 +14,10 @@ bool pausephysics = false;
 bool step = false;
 int GPUThreadsPerBlock = -1;
 #define NUM_THREADS 1024
-#define NUM_BLOCKS 1
+#define NUM_BLOCKS 8
 #define NUM_POINTS (NUM_BLOCKS * NUM_THREADS)
+unsigned int VAO, VBO;
+struct cudaGraphicsResource *cuda_vbo_resource;
 
 /**
  * @brief respond to key pressed
@@ -76,39 +78,29 @@ __global__ void bruteForce(Point points[])
 		points[tid].g += 0.05f;
 		points[tid].b -= 0.00001f;
 	}
+	// points[tid].x += 0.001f;
+}
+
+__global__ void movePoints(Point points[])
+{
+	unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+	points[tid].velocity = points[tid].nextv;
+	points[tid].x += points[tid].velocity.x;
+	points[tid].y += points[tid].velocity.y;
 }
 
 // do the physics step
 void do_physics()
 {
-	Point *cuda_points;
-	if (cudaMalloc((void **)&cuda_points, NUM_POINTS * sizeof(Point)))
-	{
-		printf("Could not allocate point memory\n");
-		return;
-	}
-	if (cudaMemcpy(cuda_points, points, NUM_POINTS * sizeof(Point), cudaMemcpyHostToDevice))
-	{
-		printf("Couldn't copy point memory\n");
-		return;
-	}
-
-	dim3 threads(NUM_THREADS, 1);
-	dim3 grid(NUM_BLOCKS, 1);
-	bruteForce<<<grid, threads>>>(cuda_points);
-
-	if (cudaMemcpy(points, cuda_points, NUM_POINTS * sizeof(Point), cudaMemcpyDeviceToHost))
-	{
-		printf("Couldn't copy point memory\n");
-		return;
-	}
-	cudaFree(cuda_points);
-
-	// move every point
-	for (int i = 0; i < NUM_POINTS; i++)
-	{
-		points[i].doPhysics(asp);
-	}
+	cudaGraphicsMapResources(1, &cuda_vbo_resource, 0);
+	Point *point_ptr;
+	size_t num_bytes = NUM_POINTS * sizeof(Point);
+	cudaGraphicsResourceGetMappedPointer((void **)&point_ptr, &num_bytes, cuda_vbo_resource);
+	bruteForce<<<NUM_BLOCKS, NUM_THREADS>>>(point_ptr);
+	cudaDeviceSynchronize();
+	movePoints<<<NUM_BLOCKS, NUM_THREADS>>>(point_ptr);
+	cudaDeviceSynchronize();
+	cudaGraphicsUnmapResources(1, &cuda_vbo_resource, 0);
 }
 
 // draw all the points
@@ -118,31 +110,8 @@ void draw_points()
 	// assumes screen size is 1000px
 	glPointSize(1000.0f / dim);
 	// use efficient memory arrays to draw color and position
-	unsigned int VAO, VBO;
-	glGenVertexArrays(1, &VAO);
-	glBindVertexArray(VAO);
-	glGenBuffers(1, &VBO);
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
-	glBufferData(GL_ARRAY_BUFFER, NUM_POINTS * sizeof(Point), points, GL_DYNAMIC_DRAW);
-	struct cudaGraphicsResource *cuda_vbo_resource;
-	cudaGraphicsGLRegisterBuffer(&cuda_vbo_resource, VBO, cudaGraphicsRegisterFlagsWriteDiscard);
 
-	cudaGraphicsMapResources(1, &cuda_vbo_resource, 0);
-	Point *point_ptr;
-	size_t num_bytes = NUM_POINTS * sizeof(Point);
-	cudaGraphicsResourceGetMappedPointer((void **)&point_ptr, &num_bytes, cuda_vbo_resource);
-	bruteForce<<<NUM_BLOCKS, NUM_THREADS>>>(point_ptr);
-	cudaDeviceSynchronize();
-	cudaGraphicsUnmapResources(1, &cuda_vbo_resource, 0);
-
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Point), (void *)0);
-	glEnableVertexAttribArray(0);
-	glBindVertexArray(VAO);
 	glDrawArrays(GL_POINTS, 0, NUM_POINTS);
-
-	cudaGraphicsUnregisterResource(cuda_vbo_resource);
-	glDeleteVertexArrays(1, &VAO);
-	glDeleteBuffers(1, &VBO);
 }
 
 /**
@@ -183,6 +152,9 @@ void display_loop(Window *windowobj)
 		glfwPollEvents();
 	}
 	free(points);
+	cudaGraphicsUnregisterResource(cuda_vbo_resource);
+	glDeleteVertexArrays(1, &VAO);
+	glDeleteBuffers(1, &VBO);
 }
 
 // stuff we initialize
@@ -208,6 +180,17 @@ void init_stuff()
 	// 	-50.0f, 0.5f, glm::vec2(0.001f, 0.0f)}));
 	// points.push_back(std::move(Point{
 	// 	50.0f, 0.0f, glm::vec2(0.0f, 0.0f)}));
+
+	glGenVertexArrays(1, &VAO);
+	glBindVertexArray(VAO);
+	glGenBuffers(1, &VBO);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBufferData(GL_ARRAY_BUFFER, NUM_POINTS * sizeof(Point), points, GL_DYNAMIC_DRAW);
+	cudaGraphicsGLRegisterBuffer(&cuda_vbo_resource, VBO, cudaGraphicsRegisterFlagsWriteDiscard);
+
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Point), (void *)0);
+	glEnableVertexAttribArray(0);
+	glBindVertexArray(VAO);
 }
 
 /**

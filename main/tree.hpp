@@ -36,11 +36,12 @@ public:
     {
         gravowner = true;
         toplevelgrav = new std::vector<quadGrav>();
+        flattened_points = new std::vector<std::vector<Point *>>();
     }
 
     // constructor for child nodes of the quad tree
-    QuadTree(unsigned long int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright, std::vector<quadGrav> *topgrav)
-        : max_size(tmax_size), lowerleft(tlowerleft), topright(ttopright), toplevelgrav(topgrav)
+    QuadTree(unsigned long int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright, std::vector<quadGrav> *topgrav, std::vector<std::vector<Point *>> *topflat)
+        : max_size(tmax_size), lowerleft(tlowerleft), topright(ttopright), toplevelgrav(topgrav), flattened_points(topflat)
     {
     }
 
@@ -100,10 +101,10 @@ public:
             center /= static_cast<float>(mypoints.size());
 
             // make all of our new quad trees
-            bot_left = new QuadTree(max_size, lowerleft, center, toplevelgrav);
-            bot_right = new QuadTree(max_size, glm::vec2(center.x, lowerleft.y), glm::vec2(topright.x, center.y), toplevelgrav);
-            top_left = new QuadTree(max_size, glm::vec2(lowerleft.x, center.y), glm::vec2(center.x, topright.y), toplevelgrav);
-            top_right = new QuadTree(max_size, center, topright, toplevelgrav);
+            bot_left = new QuadTree(max_size, lowerleft, center, toplevelgrav, flattened_points);
+            bot_right = new QuadTree(max_size, glm::vec2(center.x, lowerleft.y), glm::vec2(topright.x, center.y), toplevelgrav, flattened_points);
+            top_left = new QuadTree(max_size, glm::vec2(lowerleft.x, center.y), glm::vec2(center.x, topright.y), toplevelgrav, flattened_points);
+            top_right = new QuadTree(max_size, center, topright, toplevelgrav, flattened_points);
 
             // we're now split so this will actually insert each point into the proper children
             for (Point *point : mypoints)
@@ -138,23 +139,27 @@ public:
     }
 
     // calculate the gravity this quad has
-    void calcgrav()
+    void flatten()
     {
         if (split)
         {
-            bot_left->calcgrav();
-            bot_right->calcgrav();
-            top_left->calcgrav();
-            top_right->calcgrav();
+            bot_left->flatten();
+            bot_right->flatten();
+            top_left->flatten();
+            top_right->flatten();
             // we don't have any points if we're split return
             return;
         }
         // calculate my gravity's center and mass
         glm::vec2 gravcenter(0.0f, 0.0f);
+        std::vector<Point *> myflatpoints = {};
         for (Point *point : mypoints)
         {
+            myflatpoints.push_back(point);
             gravcenter += glm::vec2(point->x, point->y);
         }
+        int me = flattened_points->size();
+        flattened_points->push_back(std::move(myflatpoints));
         gravcenter /= mypoints.size();
         struct quadGrav mygrav = {
             gravcenter,
@@ -164,67 +169,34 @@ public:
     }
 
     // call physics on all of my points or children
-    void do_physics(size_t tid)
+    void do_physics(size_t tid, int num_threads)
     {
-        if (visited.load())
+        int mystart = std::floor(static_cast<float>(flattened_points->size()) / static_cast<float>(tid + 1)) - 1;
+        for (int i = 0; i < num_threads; i++)
         {
-            return;
-        }
-        if (split)
-        {
-            switch (tid % 4)
+            int position = i + mystart;
+            if (position >= flattened_points->size())
             {
-            case 0:
-                bot_left->do_physics(tid);
-                bot_right->do_physics(tid);
-                top_left->do_physics(tid);
-                top_right->do_physics(tid);
-                break;
-            case 1:
-                top_right->do_physics(tid);
-                top_left->do_physics(tid);
-                bot_left->do_physics(tid);
-                bot_right->do_physics(tid);
-                break;
-            case 2:
-                top_left->do_physics(tid);
-                top_right->do_physics(tid);
-                bot_left->do_physics(tid);
-                bot_right->do_physics(tid);
-                break;
-            case 3:
-                bot_right->do_physics(tid);
-                top_right->do_physics(tid);
-                bot_left->do_physics(tid);
-                top_left->do_physics(tid);
-                break;
+                return;
             }
-            visited.store(true);
-            return;
-        }
-        bool expected = false;
-        if (!visited.compare_exchange_strong(expected, true))
-        {
-            return;
-        }
-        // for every point inside me check if they collide with any other points and do gravity effect
-        for (Point *point : mypoints)
-        {
-            for (Point *other : mypoints)
+
+            for (Point *point : (*flattened_points)[position])
             {
-                point->doCollide(*other);
-            }
-            for (quadGrav grav : *toplevelgrav)
-            {
-                glm::vec2 pos(point->x, point->y);
-                glm::vec2 dir = grav.center - pos;
-                float d = glm::distance(pos, grav.center);
-                if (d > 2.0f)
+                for (Point *other : (*flattened_points)[position])
                 {
-                    point->nextv += grav.power / (d * d * d) * dir * 0.0001f;
+                    point->doCollide(*other);
+                }
+                for (quadGrav grav : *toplevelgrav)
+                {
+                    glm::vec2 pos = glm::vec2(point->x, point->y);
+                    float d = glm::distance(pos, grav.center);
+                    glm::vec2 dir = grav.center - pos;
+                    point->nextv += grav.power / (d * d * d) * dir * 0.001f;
                 }
             }
         }
+
+        return;
     }
 
 private:
@@ -240,6 +212,7 @@ private:
     glm::vec2 center;
 
     std::vector<quadGrav> *toplevelgrav;
+    std::vector<std::vector<Point *>> *flattened_points;
 
     QuadTree *bot_left;
     QuadTree *bot_right;

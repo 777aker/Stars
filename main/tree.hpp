@@ -171,8 +171,9 @@ public:
     // call physics on all of my points or children
     void do_physics(size_t tid, int num_threads)
     {
-        int mystart = std::floor(static_cast<float>(flattened_points->size()) / static_cast<float>(tid + 1)) - 1;
-        for (int i = 0; i < num_threads; i++)
+        int proportion = std::floor(static_cast<float>(flattened_points->size()) / static_cast<float>(tid + 1));
+        int mystart = proportion * (tid - 1);
+        for (int i = 0; i < proportion; i++)
         {
             int position = i + mystart;
             if (position >= flattened_points->size())

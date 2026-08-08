@@ -11,6 +11,7 @@ std::vector<Point> points = {};
 bool pausephysics = false;
 bool step = false;
 
+#define NUM_PARTICLES 100
 #define QUAD_TREE_SIZE 128
 #define NUM_THREADS 1
 
@@ -154,7 +155,7 @@ void init_stuff()
 	std::uniform_int_distribution<int32_t> dim_dist(-dim, dim);
 #define P_SPEED 0.005f
 	std::normal_distribution<float> v_dist(P_SPEED, P_SPEED / 2.0f);
-	for (int i = 0; i < 12000; i++)
+	for (int i = 0; i < NUM_PARTICLES; i++)
 	{
 		points.push_back(std::move(Point{
 			(float)(dim_dist(rng) * asp),

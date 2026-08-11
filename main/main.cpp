@@ -5,18 +5,15 @@
 #include <vector>
 #include <random>
 #include <thread>
-#include <barrier>
-
-#define NUM_PARTICLES 12000
-#define QUAD_TREE_SIZE 128
-#define NUM_THREADS 32
 
 QuadTree *theroot;
 std::vector<Point> points = {};
 bool pausephysics = false;
 bool step = false;
-std::barrier physics_bar(NUM_THREADS);
-std::vector<std::thread *> threads;
+
+#define NUM_PARTICLES 12000
+#define QUAD_TREE_SIZE 128
+#define NUM_THREADS 32
 
 /**
  * @brief respond to key pressed
@@ -48,12 +45,7 @@ void key(GLFWwindow *windowobj, int key, [[maybe_unused]] int scancode, int acti
 
 void *do_root_physics(size_t tid)
 {
-	do
-	{
-		physics_bar.arrive_and_wait();
-		theroot->do_physics(tid, NUM_THREADS);
-		physics_bar.arrive_and_wait();
-	} while (tid != 0);
+	theroot->do_physics(tid, NUM_THREADS);
 	return NULL;
 }
 
@@ -63,8 +55,19 @@ void do_physics()
 	// first calculate the gravity effect every quad has
 	theroot->flatten();
 	// resolve collisions and apply gravity to every point
-
+	std::vector<std::thread *> threads;
+	threads.resize(NUM_THREADS);
+	for (size_t i = 1; i < NUM_THREADS; i++)
+	{
+		threads[i] = new std::thread(do_root_physics, i);
+	}
 	do_root_physics(0);
+
+	for (size_t i = 1; i < NUM_THREADS; i++)
+	{
+		threads[i]->join();
+		delete threads[i];
+	}
 
 	// move every point
 	for (Point &point : points)
@@ -143,12 +146,6 @@ void display_loop(Window *windowobj)
 		// get key board events
 		glfwPollEvents();
 	}
-
-	for (size_t i = 1; i < NUM_THREADS; i++)
-	{
-		threads[i]->join();
-		delete threads[i];
-	}
 }
 
 // stuff we initialize
@@ -171,12 +168,6 @@ void init_stuff()
 	// 	-50.0f, 0.5f, glm::vec2(0.001f, 0.0f)}));
 	// points.push_back(std::move(Point{
 	// 	50.0f, 0.0f, glm::vec2(0.0f, 0.0f)}));
-
-	threads.resize(NUM_THREADS);
-	for (size_t i = 1; i < NUM_THREADS; i++)
-	{
-		threads[i] = new std::thread(do_root_physics, i);
-	}
 }
 
 /**

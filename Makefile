@@ -1,3 +1,5 @@
+BUILD_TYPE ?= release
+
 #  Msys/MinGW
 ifeq "$(OS)" "Windows_NT"
 CFLG=-O3 -Wall -DUSEGLEW -I/mingw64/include/opencv4 -std=c++23
@@ -10,7 +12,11 @@ CFLG=-O3 -Wall -Wno-deprecated-declarations  -DUSEGLEW -I/usr/include/opencv4 -s
 LIBS=-lSDL2main -lSDL2 -lSDL2_mixer -lglfw -lglew -framework Cocoa -framework OpenGL -framework IOKit
 #  Linux/Unix/Solaris
 else
-CFLG=-O3 -Wall -I/usr/include/opencv4 -Wextra -std=c++23 -pthread
+ifeq ($(BUILD_TYPE),release)
+	CFLG=-O3 -Wall -I/usr/include/opencv4 -Wextra -std=c++23 -pthread
+else
+	CFLG=-O0 -g -DDEBUG -Wall -I/usr/include/opencv4 -Wextra -std=c++23 -pthread
+endif
 LIBS=-lglfw -lGLU -lGL -lm
 endif
 #  OSX/Linux/Unix/Solaris

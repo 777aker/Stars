@@ -59,6 +59,7 @@ public:
         if (gravowner)
         {
             delete toplevelgrav;
+            delete flattened_points;
         }
     }
 
@@ -67,20 +68,19 @@ public:
     {
         if (split)
         {
-            // we do = also because we want all potential collisions to be considered
             if (point->x <= center.x && point->y <= center.y)
             {
                 top_left->insert_point(point);
             }
-            if (point->x <= center.x && point->y >= center.y)
+            if (point->x <= center.x && point->y > center.y)
             {
                 bot_left->insert_point(point);
             }
-            if (point->x >= center.x && point->y <= center.y)
+            if (point->x > center.x && point->y <= center.y)
             {
                 top_right->insert_point(point);
             }
-            if (point->x >= center.x && point->y >= center.y)
+            if (point->x > center.x && point->y > center.y)
             {
                 bot_right->insert_point(point);
             }
@@ -171,8 +171,8 @@ public:
     // call physics on all of my points or children
     void do_physics(size_t tid, int num_threads)
     {
-        int proportion = std::floor(static_cast<float>(flattened_points->size()) / static_cast<float>(tid + 1));
-        int mystart = proportion * (tid - 1);
+        int proportion = std::floor(static_cast<float>(flattened_points->size()) / static_cast<float>(num_threads));
+        int mystart = proportion * (tid);
         for (int i = 0; i < proportion; i++)
         {
             int position = i + mystart;
@@ -191,8 +191,11 @@ public:
                 {
                     glm::vec2 pos = glm::vec2(point->x, point->y);
                     float d = glm::distance(pos, grav.center);
-                    glm::vec2 dir = grav.center - pos;
-                    point->nextv += grav.power / (d * d * d) * dir * 0.001f;
+                    if (d > 2.0f)
+                    {
+                        glm::vec2 dir = grav.center - pos;
+                        point->nextv += grav.power / (d * d * d) * dir * 0.001f;
+                    }
                 }
             }
         }

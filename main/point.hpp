@@ -16,6 +16,7 @@ public:
     // need a velocity to use and a velocity to update mid frame
     glm::vec2 velocity;
     glm::vec2 nextv;
+    int myint;
 
     Point(float tx, float ty, glm::vec2 tv) : x(tx), y(ty), velocity(tv)
     {

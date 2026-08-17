@@ -11,7 +11,7 @@ std::vector<Point> points = {};
 bool pausephysics = false;
 bool step = false;
 
-#define NUM_PARTICLES 12000
+#define NUM_PARTICLES 8000
 #define QUAD_TREE_SIZE 128
 #define NUM_THREADS 32
 
@@ -45,7 +45,20 @@ void key(GLFWwindow *windowobj, int key, [[maybe_unused]] int scancode, int acti
 
 void *do_root_physics(size_t tid)
 {
-	theroot->do_physics(tid, NUM_THREADS);
+	// theroot->do_physics(tid, NUM_THREADS);
+	for (Point *point : *theroot->flattened_points)
+	{
+		for (quadGrav grav : *theroot->toplevelgrav)
+		{
+			glm::vec2 pos = glm::vec2(point->x, point->y);
+			float d = glm::distance(pos, grav.center);
+			if (d > 2.0f)
+			{
+				glm::vec2 dir = grav.center - pos;
+				point->nextv += grav.power / (d * d * d) * dir * 0.001f;
+			}
+		}
+	}
 	return NULL;
 }
 
@@ -55,19 +68,19 @@ void do_physics()
 	// first calculate the gravity effect every quad has
 	theroot->flatten();
 	// resolve collisions and apply gravity to every point
-	std::vector<std::thread *> threads;
-	threads.resize(NUM_THREADS);
-	for (size_t i = 1; i < NUM_THREADS; i++)
-	{
-		threads[i] = new std::thread(do_root_physics, i);
-	}
+	// std::vector<std::thread *> threads;
+	// threads.resize(NUM_THREADS);
+	// for (size_t i = 1; i < NUM_THREADS; i++)
+	// {
+	// 	threads[i] = new std::thread(do_root_physics, i);
+	// }
 	do_root_physics(0);
 
-	for (size_t i = 1; i < NUM_THREADS; i++)
-	{
-		threads[i]->join();
-		delete threads[i];
-	}
+	// for (size_t i = 1; i < NUM_THREADS; i++)
+	// {
+	// 	threads[i]->join();
+	// 	delete threads[i];
+	// }
 
 	// move every point
 	for (Point &point : points)
@@ -100,7 +113,7 @@ void build_tree()
 		delete theroot;
 	}
 
-	theroot = new QuadTree(QUAD_TREE_SIZE, glm::vec2(-dim * asp, dim), glm::vec2(dim * asp, -dim));
+	theroot = new QuadTree(QUAD_TREE_SIZE, glm::vec2(-dim * asp, dim), glm::vec2(dim * asp, -dim), NUM_PARTICLES);
 	for (Point &point : points)
 	{
 		theroot->insert_point(&point);

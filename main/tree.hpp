@@ -30,18 +30,24 @@ struct quadGrav
 class QuadTree
 {
 public:
+    std::vector<quadGrav> *toplevelgrav;
+    std::vector<int> *toplevelint;
+    std::vector<Point *> *flattened_points;
+
     // constructor for the root of the quad tree
-    QuadTree(unsigned long int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright)
+    QuadTree(unsigned long int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright, unsigned long num_particles)
         : max_size(tmax_size), lowerleft(tlowerleft), topright(ttopright)
     {
         gravowner = true;
         toplevelgrav = new std::vector<quadGrav>();
-        flattened_points = new std::vector<std::vector<Point *>>();
+        toplevelint = new std::vector<int>();
+        flattened_points = new std::vector<Point *>();
+        flattened_points->reserve(num_particles);
     }
 
     // constructor for child nodes of the quad tree
-    QuadTree(unsigned long int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright, std::vector<quadGrav> *topgrav, std::vector<std::vector<Point *>> *topflat)
-        : max_size(tmax_size), lowerleft(tlowerleft), topright(ttopright), toplevelgrav(topgrav), flattened_points(topflat)
+    QuadTree(unsigned long int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright, std::vector<quadGrav> *topgrav, std::vector<Point *> *topflat, std::vector<int> *topint)
+        : toplevelgrav(topgrav), toplevelint(topint), flattened_points(topflat), max_size(tmax_size), lowerleft(tlowerleft), topright(ttopright)
     {
     }
 
@@ -101,10 +107,10 @@ public:
             center /= static_cast<float>(mypoints.size());
 
             // make all of our new quad trees
-            bot_left = new QuadTree(max_size, lowerleft, center, toplevelgrav, flattened_points);
-            bot_right = new QuadTree(max_size, glm::vec2(center.x, lowerleft.y), glm::vec2(topright.x, center.y), toplevelgrav, flattened_points);
-            top_left = new QuadTree(max_size, glm::vec2(lowerleft.x, center.y), glm::vec2(center.x, topright.y), toplevelgrav, flattened_points);
-            top_right = new QuadTree(max_size, center, topright, toplevelgrav, flattened_points);
+            bot_left = new QuadTree(max_size, lowerleft, center, toplevelgrav, flattened_points, toplevelint);
+            bot_right = new QuadTree(max_size, glm::vec2(center.x, lowerleft.y), glm::vec2(topright.x, center.y), toplevelgrav, flattened_points, toplevelint);
+            top_left = new QuadTree(max_size, glm::vec2(lowerleft.x, center.y), glm::vec2(center.x, topright.y), toplevelgrav, flattened_points, toplevelint);
+            top_right = new QuadTree(max_size, center, topright, toplevelgrav, flattened_points, toplevelint);
 
             // we're now split so this will actually insert each point into the proper children
             for (Point *point : mypoints)
@@ -152,56 +158,67 @@ public:
         }
         // calculate my gravity's center and mass
         glm::vec2 gravcenter(0.0f, 0.0f);
-        std::vector<Point *> myflatpoints = {};
+        gravcenter /= mypoints.size();
+
+        int me = toplevelint->size();
+        toplevelint->push_back(mypoints.size());
         for (Point *point : mypoints)
         {
-            myflatpoints.push_back(point);
+            point->myint = me;
             gravcenter += glm::vec2(point->x, point->y);
+            flattened_points->push_back(point);
         }
-        int me = flattened_points->size();
-        flattened_points->push_back(std::move(myflatpoints));
-        gravcenter /= mypoints.size();
+
         struct quadGrav mygrav = {
             gravcenter,
             static_cast<float>(mypoints.size())};
         // insert our gravity into a flat list for easy traversal
         toplevelgrav->push_back(std::move(mygrav));
+
+        // std::vector<Point *> myflatpoints = {};
+        // for (Point *point : mypoints)
+        // {
+        //     myflatpoints.push_back(point);
+        //     gravcenter += glm::vec2(point->x, point->y);
+        // }
+        // int me = toplevelint->size();
+        // flattened_points->push_back(std::move(myflatpoints));
     }
 
     // call physics on all of my points or children
-    void do_physics(size_t tid, int num_threads)
-    {
-        int proportion = std::floor(static_cast<float>(flattened_points->size()) / static_cast<float>(num_threads));
-        int mystart = proportion * (tid);
-        for (int i = 0; i < proportion; i++)
-        {
-            int position = i + mystart;
-            if (position >= flattened_points->size())
-            {
-                return;
-            }
+    // void do_physics(size_t tid, int num_threads)
+    // {
+    //     int proportion = std::floor(static_cast<float>(flattened_points->size()) / static_cast<float>(num_threads));
+    //     int mystart = proportion * (tid);
+    //     for (int i = 0; i < proportion; i++)
+    //     {
+    //         int position = i + mystart;
+    //         if (position >= flattened_points->size())
+    //         {
+    //             return;
+    //         }
 
-            for (Point *point : (*flattened_points)[position])
-            {
-                for (Point *other : (*flattened_points)[position])
-                {
-                    point->doCollide(*other);
-                }
-                for (quadGrav grav : *toplevelgrav)
-                {
-                    glm::vec2 pos = glm::vec2(point->x, point->y);
-                    float d = glm::distance(pos, grav.center);
-                    if (d > 2.0f)
-                    {
-                        glm::vec2 dir = grav.center - pos;
-                        point->nextv += grav.power / (d * d * d) * dir * 0.001f;
-                    }
-                }
-            }
-        }
+    //         for (Point *point : (*flattened_points)[position])
+    //         {
+    //             for (Point *other : (*flattened_points)[position])
+    //             {
+    //                 point->doCollide(*other);
+    //             }
+    //             for (quadGrav grav : *toplevelgrav)
+    //             {
+    //                 glm::vec2 pos = glm::vec2(point->x, point->y);
+    //                 float d = glm::distance(pos, grav.center);
+    //                 if (d > 2.0f)
+    //                 {
+    //                     glm::vec2 dir = grav.center - pos;
+    //                     point->nextv += grav.power / (d * d * d) * dir * 0.001f;
+    //                 }
+    //             }
+    //         }
+    //     }
 
-        return;
-    }
+    //     return;
+    // }
 
 private:
     unsigned long int max_size;
@@ -214,9 +231,6 @@ private:
     glm::vec2 lowerleft;
     glm::vec2 topright;
     glm::vec2 center;
-
-    std::vector<quadGrav> *toplevelgrav;
-    std::vector<std::vector<Point *>> *flattened_points;
 
     QuadTree *bot_left;
     QuadTree *bot_right;

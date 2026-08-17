@@ -5,15 +5,16 @@
 #include <vector>
 #include <random>
 #include <thread>
+#include <iostream>
 
 QuadTree *theroot;
 std::vector<Point> points = {};
 bool pausephysics = false;
 bool step = false;
 
-#define NUM_PARTICLES 8000
+#define NUM_PARTICLES 2000
 #define QUAD_TREE_SIZE 128
-#define NUM_THREADS 32
+#define NUM_THREADS 1
 
 /**
  * @brief respond to key pressed
@@ -68,19 +69,19 @@ void do_physics()
 	// first calculate the gravity effect every quad has
 	theroot->flatten();
 	// resolve collisions and apply gravity to every point
-	// std::vector<std::thread *> threads;
-	// threads.resize(NUM_THREADS);
-	// for (size_t i = 1; i < NUM_THREADS; i++)
-	// {
-	// 	threads[i] = new std::thread(do_root_physics, i);
-	// }
+	std::vector<std::thread *> threads;
+	threads.resize(NUM_THREADS);
+	for (size_t i = 1; i < NUM_THREADS; i++)
+	{
+		threads[i] = new std::thread(do_root_physics, i);
+	}
 	do_root_physics(0);
 
-	// for (size_t i = 1; i < NUM_THREADS; i++)
-	// {
-	// 	threads[i]->join();
-	// 	delete threads[i];
-	// }
+	for (size_t i = 1; i < NUM_THREADS; i++)
+	{
+		threads[i]->join();
+		delete threads[i];
+	}
 
 	// move every point
 	for (Point &point : points)

@@ -16,7 +16,7 @@ bool step = false;
 int GPUThreadsPerBlock = -1;
 
 #define NUM_THREADS 1024
-#define NUM_BLOCKS 1
+#define NUM_BLOCKS 16
 #define NUM_PARTICLES (NUM_THREADS * NUM_BLOCKS)
 #define QUAD_TREE_SIZE 128
 
@@ -48,11 +48,49 @@ void key(GLFWwindow *windowobj, int key, [[maybe_unused]] int scancode, int acti
 	}
 }
 
-__global__ void doGPUPhysics(Point points[], flat_info flatted_info[], quadGrav grav[])
+__device__ void handleCollide(Point *point, Point other)
+{
+	glm::vec2 pos(point->x, point->y);
+	glm::vec2 otherpos(other.x, other.y);
+	float d = glm::distance(pos, otherpos);
+	if (d < 1.0f || d > 2.0f)
+	{
+		return;
+	}
+	glm::vec2 dir = otherpos - pos;
+	dir = glm::normalize(dir);
+	if (glm::dot(dir, other.velocity - point->velocity) > 0.0f)
+	{
+		return;
+	}
+	glm::vec2 otherdir = glm::normalize(pos - otherpos);
+	point->nextv -= dir * glm::dot(dir, point->velocity) * 0.8f;
+	point->nextv += otherdir * glm::dot(otherdir, other.velocity) * 0.8f;
+	point->r += 0.0001f;
+	point->g += 0.05f;
+	point->b -= 0.00001f;
+}
+
+__global__ void doGPUPhysics(Point points[], flat_info flatted_info[], quadGrav grav[], int gravsize)
 {
 	unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int starting_check = flatted_info[points[tid].myint].starting_index;
 	int end_check = starting_check + flatted_info[points[tid].myint].size;
+	for (int i = starting_check; i < end_check; i++)
+	{
+		handleCollide(&points[tid], points[i]);
+	}
+
+	for (int i = 0; i < gravsize; i++)
+	{
+		glm::vec2 pos = glm::vec2(points[tid].x, points[tid].y);
+		float d = glm::distance(pos, grav[i].center);
+		if (d > 2.0f)
+		{
+			glm::vec2 dir = grav[i].center - pos;
+			points[tid].nextv += grav[i].power / (d * d * d) * dir * 0.001f;
+		}
+	}
 }
 
 void *do_root_physics(size_t tid)
@@ -123,7 +161,7 @@ void *do_root_physics(size_t tid)
 
 	dim3 threads(NUM_THREADS, 1);
 	dim3 grid(NUM_BLOCKS, 1);
-	doGPUPhysics<<<grid, threads>>>(cuda_points, cuda_flatted, cuda_grav);
+	doGPUPhysics<<<grid, threads>>>(cuda_points, cuda_flatted, cuda_grav, theroot->toplevelgrav->size());
 	cudaError_t err = cudaDeviceSynchronize();
 	if (err != cudaSuccess)
 	{

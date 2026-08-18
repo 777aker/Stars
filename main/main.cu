@@ -53,10 +53,6 @@ __global__ void doGPUPhysics(Point points[], flat_info flatted_info[], quadGrav 
 	unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int starting_check = flatted_info[points[tid].myint].starting_index;
 	int end_check = starting_check + flatted_info[points[tid].myint].size;
-	for (int i = starting_check; i < end_check; i++)
-	{
-		points[tid].doCollide(points[i]);
-	}
 }
 
 void *do_root_physics(size_t tid)

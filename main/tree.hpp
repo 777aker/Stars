@@ -27,12 +27,19 @@ struct quadGrav
     float power;
 };
 
+struct flat_info
+{
+    int starting_index;
+    int size;
+};
+
 class QuadTree
 {
 public:
     std::vector<quadGrav> *toplevelgrav;
-    std::vector<int> *toplevelint;
-    std::vector<Point *> *flattened_points;
+    std::vector<flat_info> *toplevelint;
+    int *top_level_index;
+    std::vector<Point> *flattened_points;
 
     // constructor for the root of the quad tree
     QuadTree(unsigned long int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright, unsigned long num_particles)
@@ -40,14 +47,15 @@ public:
     {
         gravowner = true;
         toplevelgrav = new std::vector<quadGrav>();
-        toplevelint = new std::vector<int>();
-        flattened_points = new std::vector<Point *>();
+        toplevelint = new std::vector<flat_info>();
+        top_level_index = new int(0);
+        flattened_points = new std::vector<Point>();
         flattened_points->reserve(num_particles);
     }
 
     // constructor for child nodes of the quad tree
-    QuadTree(unsigned long int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright, std::vector<quadGrav> *topgrav, std::vector<Point *> *topflat, std::vector<int> *topint)
-        : toplevelgrav(topgrav), toplevelint(topint), flattened_points(topflat), max_size(tmax_size), lowerleft(tlowerleft), topright(ttopright)
+    QuadTree(unsigned long int tmax_size, glm::vec2 tlowerleft, glm::vec2 ttopright, std::vector<quadGrav> *topgrav, std::vector<Point> *topflat, std::vector<flat_info> *topint, int *tli)
+        : toplevelgrav(topgrav), toplevelint(topint), top_level_index(tli), flattened_points(topflat), max_size(tmax_size), lowerleft(tlowerleft), topright(ttopright)
     {
     }
 
@@ -65,6 +73,8 @@ public:
         if (gravowner)
         {
             delete toplevelgrav;
+            delete toplevelint;
+            delete top_level_index;
             delete flattened_points;
         }
     }
@@ -107,10 +117,10 @@ public:
             center /= static_cast<float>(mypoints.size());
 
             // make all of our new quad trees
-            bot_left = new QuadTree(max_size, lowerleft, center, toplevelgrav, flattened_points, toplevelint);
-            bot_right = new QuadTree(max_size, glm::vec2(center.x, lowerleft.y), glm::vec2(topright.x, center.y), toplevelgrav, flattened_points, toplevelint);
-            top_left = new QuadTree(max_size, glm::vec2(lowerleft.x, center.y), glm::vec2(center.x, topright.y), toplevelgrav, flattened_points, toplevelint);
-            top_right = new QuadTree(max_size, center, topright, toplevelgrav, flattened_points, toplevelint);
+            bot_left = new QuadTree(max_size, lowerleft, center, toplevelgrav, flattened_points, toplevelint, top_level_index);
+            bot_right = new QuadTree(max_size, glm::vec2(center.x, lowerleft.y), glm::vec2(topright.x, center.y), toplevelgrav, flattened_points, toplevelint, top_level_index);
+            top_left = new QuadTree(max_size, glm::vec2(lowerleft.x, center.y), glm::vec2(center.x, topright.y), toplevelgrav, flattened_points, toplevelint, top_level_index);
+            top_right = new QuadTree(max_size, center, topright, toplevelgrav, flattened_points, toplevelint, top_level_index);
 
             // we're now split so this will actually insert each point into the proper children
             for (Point *point : mypoints)
@@ -158,16 +168,20 @@ public:
         }
         // calculate my gravity's center and mass
         glm::vec2 gravcenter(0.0f, 0.0f);
-        gravcenter /= mypoints.size();
 
         int me = toplevelint->size();
-        toplevelint->push_back(mypoints.size());
+        flat_info tempinfo = {
+            .starting_index = *top_level_index,
+            .size = (int)mypoints.size()};
+        toplevelint->push_back(std::move(tempinfo));
+        *top_level_index += mypoints.size();
         for (Point *point : mypoints)
         {
             point->myint = me;
             gravcenter += glm::vec2(point->x, point->y);
-            flattened_points->push_back(point);
+            flattened_points->push_back(*point);
         }
+        gravcenter /= mypoints.size();
 
         struct quadGrav mygrav = {
             gravcenter,

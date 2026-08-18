@@ -1,6 +1,7 @@
 #include "../window/window.hpp"
 #include "point.hpp"
 #include "tree.hpp"
+#include "InitGPUcu.hpp"
 
 #include <vector>
 #include <random>
@@ -12,9 +13,12 @@ std::vector<Point> points = {};
 bool pausephysics = false;
 bool step = false;
 
-#define NUM_PARTICLES 2000
+int GPUThreadsPerBlock = -1;
+
+#define NUM_THREADS 1024
+#define NUM_BLOCKS 1
+#define NUM_PARTICLES (NUM_THREADS * NUM_BLOCKS)
 #define QUAD_TREE_SIZE 128
-#define NUM_THREADS 1
 
 /**
  * @brief respond to key pressed
@@ -44,22 +48,101 @@ void key(GLFWwindow *windowobj, int key, [[maybe_unused]] int scancode, int acti
 	}
 }
 
+__global__ void doGPUPhysics(Point points[], flat_info flatted_info[], quadGrav grav[])
+{
+	unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+	int starting_check = flatted_info[points[tid].myint].starting_index;
+	int end_check = starting_check + flatted_info[points[tid].myint].size;
+	for (int i = starting_check; i < end_check; i++)
+	{
+		points[tid].doCollide(points[i]);
+	}
+}
+
 void *do_root_physics(size_t tid)
 {
 	// theroot->do_physics(tid, NUM_THREADS);
-	for (Point *point : *theroot->flattened_points)
+	// for (Point *point : *theroot->flattened_points)
+	// {
+	// 	int starting_check = (*theroot->toplevelint)[point->myint].starting_index;
+	// 	int end = starting_check + (*theroot->toplevelint)[point->myint].size;
+	// 	for (int i = starting_check; i < end; i++)
+	// 	{
+	// 		point->doCollide(*(*theroot->flattened_points)[i]);
+	// 	}
+	// 	for (quadGrav grav : *theroot->toplevelgrav)
+	// 	{
+	// 		glm::vec2 pos = glm::vec2(point->x, point->y);
+	// 		float d = glm::distance(pos, grav.center);
+	// 		if (d > 2.0f)
+	// 		{
+	// 			glm::vec2 dir = grav.center - pos;
+	// 			point->nextv += grav.power / (d * d * d) * dir * 0.001f;
+	// 		}
+	// 	}
+	// }
+
+	Point *cuda_points;
+	if (cudaMalloc((void **)&cuda_points, NUM_PARTICLES * sizeof(Point)))
 	{
-		for (quadGrav grav : *theroot->toplevelgrav)
-		{
-			glm::vec2 pos = glm::vec2(point->x, point->y);
-			float d = glm::distance(pos, grav.center);
-			if (d > 2.0f)
-			{
-				glm::vec2 dir = grav.center - pos;
-				point->nextv += grav.power / (d * d * d) * dir * 0.001f;
-			}
-		}
+		printf("Could not allocate cuda point memory\n");
+		return NULL;
 	}
+	if (cudaMemcpy(cuda_points, theroot->flattened_points->data(), NUM_PARTICLES * sizeof(Point), cudaMemcpyHostToDevice))
+	{
+		cudaFree(cuda_points);
+		printf("Could not copy point data to cuda\n");
+		return NULL;
+	}
+	flat_info *cuda_flatted;
+	if (cudaMalloc((void **)&cuda_flatted, theroot->toplevelint->size() * sizeof(flat_info)))
+	{
+		cudaFree(cuda_points);
+		printf("Could not allocate cuda flatted\n");
+		return NULL;
+	}
+	if (cudaMemcpy(cuda_flatted, theroot->toplevelint->data(), theroot->toplevelint->size() * sizeof(flat_info), cudaMemcpyHostToDevice))
+	{
+		cudaFree(cuda_flatted);
+		cudaFree(cuda_points);
+		printf("Could not copy cuda flatted\n");
+		return NULL;
+	}
+	quadGrav *cuda_grav;
+	if (cudaMalloc((void **)&cuda_grav, theroot->toplevelgrav->size() * sizeof(quadGrav)))
+	{
+		cudaFree(cuda_flatted);
+		cudaFree(cuda_points);
+		printf("Could not allocate cuda grav\n");
+		return NULL;
+	}
+	if (cudaMemcpy(cuda_grav, theroot->toplevelgrav->data(), theroot->toplevelgrav->size() * sizeof(quadGrav), cudaMemcpyHostToDevice))
+	{
+		cudaFree(cuda_grav);
+		cudaFree(cuda_flatted);
+		cudaFree(cuda_points);
+		printf("Could not copy cuda gravity\n");
+		return NULL;
+	}
+
+	dim3 threads(NUM_THREADS, 1);
+	dim3 grid(NUM_BLOCKS, 1);
+	doGPUPhysics<<<grid, threads>>>(cuda_points, cuda_flatted, cuda_grav);
+	cudaError_t err = cudaDeviceSynchronize();
+	if (err != cudaSuccess)
+	{
+		printf("CUDA Error: %s\n", cudaGetErrorString(err));
+		return NULL;
+	}
+	if (cudaMemcpy(&points[0], cuda_points, NUM_PARTICLES * sizeof(Point), cudaMemcpyDeviceToHost))
+	{
+		printf("Couldn't get points from cuda\n");
+	}
+
+	cudaFree(cuda_grav);
+	cudaFree(cuda_flatted);
+	cudaFree(cuda_points);
+
 	return NULL;
 }
 
@@ -69,19 +152,19 @@ void do_physics()
 	// first calculate the gravity effect every quad has
 	theroot->flatten();
 	// resolve collisions and apply gravity to every point
-	std::vector<std::thread *> threads;
-	threads.resize(NUM_THREADS);
-	for (size_t i = 1; i < NUM_THREADS; i++)
-	{
-		threads[i] = new std::thread(do_root_physics, i);
-	}
+	// std::vector<std::thread *> threads;
+	// threads.resize(NUM_THREADS);
+	// for (size_t i = 1; i < NUM_THREADS; i++)
+	// {
+	// 	threads[i] = new std::thread(do_root_physics, i);
+	// }
 	do_root_physics(0);
 
-	for (size_t i = 1; i < NUM_THREADS; i++)
-	{
-		threads[i]->join();
-		delete threads[i];
-	}
+	// for (size_t i = 1; i < NUM_THREADS; i++)
+	// {
+	// 	threads[i]->join();
+	// 	delete threads[i];
+	// }
 
 	// move every point
 	for (Point &point : points)
@@ -165,6 +248,8 @@ void display_loop(Window *windowobj)
 // stuff we initialize
 void init_stuff()
 {
+	GPUThreadsPerBlock = InitGPU(1);
+
 	std::mt19937 rng(1234);
 	std::uniform_int_distribution<int32_t> dim_dist(-dim, dim);
 #define P_SPEED 0.005f

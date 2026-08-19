@@ -30,7 +30,7 @@ InitGPUcu.o: InitGPUcu.cu InitGPUcu.hpp
 
 .SUFFIXES: .c .cpp .cu
 .cu.o:
-	nvcc -g -G -O0 -c -Xcompiler -Wall $<
+	nvcc -O3 -c -Xcompiler -Wall $<
 
 .cpp.o:
 	g++ -c $(CFLG) -I /usr/include/opencv4 $<

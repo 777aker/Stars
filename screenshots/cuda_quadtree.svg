@@ -1,0 +1,1866 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="758" onload="init(evt)" viewBox="0 0 1200 758" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+		if (currentSearchTerm === null) return;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="758.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >Flame Graph</text>
+<text id="details" x="10.00" y="741" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="741" > </text>
+<g id="frames">
+<g >
+<title>[libcuda.so.595.84] (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="389" width="4.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1164.36" y="399.5" ></text>
+</g>
+<g >
+<title>QuadTree::insert_point (1,063,097,194 samples, 1.92%)</title><rect x="97.5" y="437" width="22.7" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="100.50" y="447.5" >Q..</text>
+</g>
+<g >
+<title>__x64_sys_poll (5,050,505 samples, 0.01%)</title><rect x="10.0" y="517" width="0.1" height="15.0" fill="rgb(245,186,44)" rx="2" ry="2" />
+<text  x="13.00" y="527.5" ></text>
+</g>
+<g >
+<title>__libc_start_main_impl (55,005,880,256 samples, 99.49%)</title><rect x="16.1" y="661" width="1173.9" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="19.07" y="671.5" >__libc_start_main_impl</text>
+</g>
+<g >
+<title>dentry_free (56,435,673 samples, 0.10%)</title><rect x="10.1" y="469" width="1.2" height="15.0" fill="rgb(223,83,19)" rx="2" ry="2" />
+<text  x="13.11" y="479.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;Point*, std::vector&lt;Point, std::allocator&lt;Point&gt; &gt; &gt;::operator* (56,448,696 samples, 0.10%)</title><rect x="204.9" y="565" width="1.2" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="207.88" y="575.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (56,054,398 samples, 0.10%)</title><rect x="1160.2" y="341" width="1.2" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1163.16" y="351.5" ></text>
+</g>
+<g >
+<title>void std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::_M_realloc_insert&lt;Point* const&amp;&gt; (56,230,496 samples, 0.10%)</title><rect x="142.9" y="469" width="1.2" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="145.87" y="479.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (56,291,953 samples, 0.10%)</title><rect x="14.9" y="565" width="1.2" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="17.87" y="575.5" ></text>
+</g>
+<g >
+<title>main (55,005,880,256 samples, 99.49%)</title><rect x="16.1" y="613" width="1173.9" height="15.0" fill="rgb(243,179,42)" rx="2" ry="2" />
+<text  x="19.07" y="623.5" >main</text>
+</g>
+<g >
+<title>libcudart_static_901c335edfe2e89188fa6b8fe3e2a2194ad05bff (1,117,251,508 samples, 2.02%)</title><rect x="1166.2" y="533" width="23.8" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="1169.16" y="543.5" >l..</text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt;::base (55,550,785 samples, 0.10%)</title><rect x="188.2" y="421" width="1.2" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="191.21" y="431.5" ></text>
+</g>
+<g >
+<title>libcudart_static_ff466e58390a44a174cd1b2084ede65f6033356c (44,535,962,305 samples, 80.55%)</title><rect x="208.5" y="533" width="950.5" height="15.0" fill="rgb(244,179,42)" rx="2" ry="2" />
+<text  x="211.49" y="543.5" >libcudart_static_ff466e58390a44a174cd1b2084ede65f6033356c</text>
+</g>
+<g >
+<title>do_root_physics (45,989,602,966 samples, 83.18%)</title><rect x="208.5" y="565" width="981.5" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="211.49" y="575.5" >do_root_physics</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,606,237 samples, 0.20%)</title><rect x="1159.0" y="453" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1161.98" y="463.5" ></text>
+</g>
+<g >
+<title>QuadTree::~QuadTree (55,594,597 samples, 0.10%)</title><rect x="145.3" y="485" width="1.1" height="15.0" fill="rgb(229,110,26)" rx="2" ry="2" />
+<text  x="148.25" y="495.5" ></text>
+</g>
+<g >
+<title>allocate (56,463,542 samples, 0.10%)</title><rect x="119.0" y="357" width="1.2" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="121.99" y="367.5" ></text>
+</g>
+<g >
+<title>__relocate_a&lt;Point**, Point**, std::allocator&lt;Point*&gt; &gt; (56,230,496 samples, 0.10%)</title><rect x="142.9" y="437" width="1.2" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="145.87" y="447.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (56,350,269 samples, 0.10%)</title><rect x="105.8" y="277" width="1.2" height="15.0" fill="rgb(218,61,14)" rx="2" ry="2" />
+<text  x="108.82" y="287.5" ></text>
+</g>
+<g >
+<title>QuadTree::insert_point (2,570,799,727 samples, 4.65%)</title><rect x="82.0" y="469" width="54.9" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="85.03" y="479.5" >QuadT..</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,899,296 samples, 0.20%)</title><rect x="1175.7" y="293" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1178.68" y="303.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;Point*, std::vector&lt;Point, std::allocator&lt;Point&gt; &gt; &gt;::operator* (56,470,288 samples, 0.10%)</title><rect x="146.4" y="565" width="1.2" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="149.44" y="575.5" ></text>
+</g>
+<g >
+<title>[libnvidia-eglcore.so.595.84] (55,540,594 samples, 0.10%)</title><rect x="11.3" y="677" width="1.2" height="15.0" fill="rgb(210,23,5)" rx="2" ry="2" />
+<text  x="14.31" y="687.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt;::base (56,519,020 samples, 0.10%)</title><rect x="120.2" y="437" width="1.2" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="123.19" y="447.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (557,990,259 samples, 1.01%)</title><rect x="1166.2" y="485" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1169.16" y="495.5" ></text>
+</g>
+<g >
+<title>void std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::_M_realloc_insert&lt;Point* const&amp;&gt; (55,552,501 samples, 0.10%)</title><rect x="144.1" y="485" width="1.2" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="147.07" y="495.5" ></text>
+</g>
+<g >
+<title>drm_syncobj_array_wait.isra.0 (56,291,953 samples, 0.10%)</title><rect x="14.9" y="453" width="1.2" height="15.0" fill="rgb(207,9,2)" rx="2" ry="2" />
+<text  x="17.87" y="463.5" ></text>
+</g>
+<g >
+<title>float const&amp; std::clamp&lt;float&gt; (278,744,250 samples, 0.50%)</title><rect x="171.5" y="549" width="6.0" height="15.0" fill="rgb(228,110,26)" rx="2" ry="2" />
+<text  x="174.55" y="559.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt;::base (55,552,496 samples, 0.10%)</title><rect x="129.7" y="437" width="1.2" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="132.74" y="447.5" ></text>
+</g>
+<g >
+<title>void std::__new_allocator&lt;Point&gt;::construct&lt;Point, Point const&amp;&gt; (111,895,625 samples, 0.20%)</title><rect x="197.7" y="421" width="2.4" height="15.0" fill="rgb(250,207,49)" rx="2" ry="2" />
+<text  x="200.72" y="431.5" ></text>
+</g>
+<g >
+<title>QuadTree::flatten (947,559,980 samples, 1.71%)</title><rect x="182.3" y="501" width="20.2" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="185.27" y="511.5" ></text>
+</g>
+<g >
+<title>drmIoctl (56,291,953 samples, 0.10%)</title><rect x="14.9" y="613" width="1.2" height="15.0" fill="rgb(251,215,51)" rx="2" ry="2" />
+<text  x="17.87" y="623.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (5,050,505 samples, 0.01%)</title><rect x="10.0" y="645" width="0.1" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="13.00" y="655.5" ></text>
+</g>
+<g >
+<title>QuadTree::insert_point (112,538,760 samples, 0.20%)</title><rect x="16.1" y="581" width="2.4" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="19.07" y="591.5" ></text>
+</g>
+<g >
+<title>QuadTree::flatten (1,059,430,489 samples, 1.92%)</title><rect x="182.3" y="533" width="22.6" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="185.27" y="543.5" >Q..</text>
+</g>
+<g >
+<title>clock_gettime@plt (166,604,348 samples, 0.30%)</title><rect x="1155.4" y="437" width="3.6" height="15.0" fill="rgb(229,112,27)" rx="2" ry="2" />
+<text  x="1158.42" y="447.5" ></text>
+</g>
+<g >
+<title>hrtimer_interrupt (55,551,973 samples, 0.10%)</title><rect x="1151.8" y="373" width="1.2" height="15.0" fill="rgb(228,109,26)" rx="2" ry="2" />
+<text  x="1154.85" y="383.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (56,352,469 samples, 0.10%)</title><rect x="1161.4" y="245" width="1.2" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="1164.36" y="255.5" ></text>
+</g>
+<g >
+<title>timekeeping_update_from_shadow (55,551,493 samples, 0.10%)</title><rect x="1058.8" y="213" width="1.2" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="1061.80" y="223.5" ></text>
+</g>
+<g >
+<title>libcudart_static_5382377d5c772c9d197c0cda9fd9742ee6ad893c (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="517" width="4.8" height="15.0" fill="rgb(243,174,41)" rx="2" ry="2" />
+<text  x="1164.36" y="527.5" ></text>
+</g>
+<g >
+<title>QuadTree::~QuadTree (55,594,597 samples, 0.10%)</title><rect x="145.3" y="533" width="1.1" height="15.0" fill="rgb(229,110,26)" rx="2" ry="2" />
+<text  x="148.25" y="543.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (44,535,962,305 samples, 80.55%)</title><rect x="208.5" y="469" width="950.5" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="211.49" y="479.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>__close (56,435,673 samples, 0.10%)</title><rect x="10.1" y="661" width="1.2" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="13.11" y="671.5" ></text>
+</g>
+<g >
+<title>update_process_times (55,551,973 samples, 0.10%)</title><rect x="1151.8" y="325" width="1.2" height="15.0" fill="rgb(250,209,50)" rx="2" ry="2" />
+<text  x="1154.85" y="335.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (56,054,398 samples, 0.10%)</title><rect x="1160.2" y="373" width="1.2" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1163.16" y="383.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::push_back (55,552,501 samples, 0.10%)</title><rect x="144.1" y="501" width="1.2" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="147.07" y="511.5" ></text>
+</g>
+<g >
+<title>do_physics (48,672,781,937 samples, 88.03%)</title><rect x="151.2" y="581" width="1038.8" height="15.0" fill="rgb(206,5,1)" rx="2" ry="2" />
+<text  x="154.23" y="591.5" >do_physics</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (56,054,398 samples, 0.10%)</title><rect x="1160.2" y="325" width="1.2" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1163.16" y="335.5" ></text>
+</g>
+<g >
+<title>uvm_tracker_remove_completed (56,352,469 samples, 0.10%)</title><rect x="1161.4" y="149" width="1.2" height="15.0" fill="rgb(211,29,7)" rx="2" ry="2" />
+<text  x="1164.36" y="159.5" ></text>
+</g>
+<g >
+<title>_int_malloc (56,318,507 samples, 0.10%)</title><rect x="35.1" y="453" width="1.2" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="38.12" y="463.5" ></text>
+</g>
+<g >
+<title>__x64_sys_close (56,435,673 samples, 0.10%)</title><rect x="10.1" y="581" width="1.2" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="13.11" y="591.5" ></text>
+</g>
+<g >
+<title>kmem_cache_free (56,435,673 samples, 0.10%)</title><rect x="10.1" y="453" width="1.2" height="15.0" fill="rgb(254,225,53)" rx="2" ry="2" />
+<text  x="13.11" y="463.5" ></text>
+</g>
+<g >
+<title>__fput (56,435,673 samples, 0.10%)</title><rect x="10.1" y="549" width="1.2" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="13.11" y="559.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::push_back (168,163,502 samples, 0.30%)</title><rect x="140.5" y="485" width="3.6" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="143.48" y="495.5" ></text>
+</g>
+<g >
+<title>__sysvec_apic_timer_interrupt (55,551,973 samples, 0.10%)</title><rect x="1151.8" y="389" width="1.2" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="1154.85" y="399.5" ></text>
+</g>
+<g >
+<title>QuadTree::insert_point (4,379,035,736 samples, 7.92%)</title><rect x="51.8" y="517" width="93.5" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="54.79" y="527.5" >QuadTree::i..</text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::push_back (111,903,394 samples, 0.20%)</title><rect x="104.6" y="373" width="2.4" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="107.64" y="383.5" ></text>
+</g>
+<g >
+<title>__clock_gettime (111,942,345 samples, 0.20%)</title><rect x="1153.0" y="437" width="2.4" height="15.0" fill="rgb(236,143,34)" rx="2" ry="2" />
+<text  x="1156.03" y="447.5" ></text>
+</g>
+<g >
+<title>__x64_sys_ioctl (56,352,469 samples, 0.10%)</title><rect x="1161.4" y="229" width="1.2" height="15.0" fill="rgb(249,204,49)" rx="2" ry="2" />
+<text  x="1164.36" y="239.5" ></text>
+</g>
+<g >
+<title>bool __gnu_cxx::operator!=&lt;Point*, std::vector&lt;Point, std::allocator&lt;Point&gt; &gt; &gt; (56,434,212 samples, 0.10%)</title><rect x="207.3" y="565" width="1.2" height="15.0" fill="rgb(226,99,23)" rx="2" ry="2" />
+<text  x="210.29" y="575.5" ></text>
+</g>
+<g >
+<title>tcache_get_n (56,463,542 samples, 0.10%)</title><rect x="119.0" y="309" width="1.2" height="15.0" fill="rgb(229,110,26)" rx="2" ry="2" />
+<text  x="121.99" y="319.5" ></text>
+</g>
+<g >
+<title>float const&amp; std::min&lt;float&gt; (167,639,766 samples, 0.30%)</title><rect x="172.7" y="533" width="3.6" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="175.73" y="543.5" ></text>
+</g>
+<g >
+<title>QuadTree::flatten (222,962,005 samples, 0.40%)</title><rect x="183.5" y="421" width="4.7" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="186.46" y="431.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::push_back (224,586,795 samples, 0.41%)</title><rect x="110.6" y="405" width="4.8" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="113.60" y="415.5" ></text>
+</g>
+<g >
+<title>_int_malloc (56,408,300 samples, 0.10%)</title><rect x="134.5" y="341" width="1.2" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="137.50" y="351.5" ></text>
+</g>
+<g >
+<title>cuMemAlloc_v2 (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="501" width="4.8" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="1164.36" y="511.5" ></text>
+</g>
+<g >
+<title>[[vdso]] (336,744,580 samples, 0.61%)</title><rect x="597.2" y="421" width="7.2" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="600.21" y="431.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::push_back (112,016,820 samples, 0.20%)</title><rect x="117.8" y="421" width="2.4" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="120.80" y="431.5" ></text>
+</g>
+<g >
+<title>void std::allocator_traits&lt;std::allocator&lt;Point*&gt; &gt;::construct&lt;Point*, Point* const&amp;&gt; (112,712,397 samples, 0.20%)</title><rect x="110.6" y="389" width="2.4" height="15.0" fill="rgb(222,78,18)" rx="2" ry="2" />
+<text  x="113.60" y="399.5" ></text>
+</g>
+<g >
+<title>QuadTree::insert_point (727,099,077 samples, 1.32%)</title><rect x="99.9" y="421" width="15.5" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="102.87" y="431.5" ></text>
+</g>
+<g >
+<title>finish_dput (56,435,673 samples, 0.10%)</title><rect x="10.1" y="501" width="1.2" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="13.11" y="511.5" ></text>
+</g>
+<g >
+<title>__raw_spin_lock_irqsave (55,556,766 samples, 0.10%)</title><rect x="1060.0" y="213" width="1.2" height="15.0" fill="rgb(233,132,31)" rx="2" ry="2" />
+<text  x="1062.99" y="223.5" ></text>
+</g>
+<g >
+<title>_start (55,005,880,256 samples, 99.49%)</title><rect x="16.1" y="677" width="1173.9" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="19.07" y="687.5" >_start</text>
+</g>
+<g >
+<title>std::__is_constant_evaluated (55,558,225 samples, 0.10%)</title><rect x="176.3" y="533" width="1.2" height="15.0" fill="rgb(234,137,32)" rx="2" ry="2" />
+<text  x="179.31" y="543.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt;::operator++ (56,019,823 samples, 0.10%)</title><rect x="136.9" y="469" width="1.2" height="15.0" fill="rgb(206,9,2)" rx="2" ry="2" />
+<text  x="139.89" y="479.5" ></text>
+</g>
+<g >
+<title>std::_Vector_base&lt;Point*, std::allocator&lt;Point*&gt; &gt;::_M_deallocate (55,553,125 samples, 0.10%)</title><rect x="104.6" y="357" width="1.2" height="15.0" fill="rgb(207,11,2)" rx="2" ry="2" />
+<text  x="107.64" y="367.5" ></text>
+</g>
+<g >
+<title>bool __gnu_cxx::operator!=&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt; (55,562,449 samples, 0.10%)</title><rect x="200.1" y="469" width="1.2" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="203.11" y="479.5" ></text>
+</g>
+<g >
+<title>tcache_put_n (55,537,579 samples, 0.10%)</title><rect x="108.2" y="293" width="1.2" height="15.0" fill="rgb(217,58,13)" rx="2" ry="2" />
+<text  x="111.23" y="303.5" ></text>
+</g>
+<g >
+<title>__x64_sys_ioctl (168,430,447 samples, 0.30%)</title><rect x="1162.6" y="245" width="3.6" height="15.0" fill="rgb(249,204,49)" rx="2" ry="2" />
+<text  x="1165.56" y="255.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="325" width="4.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1164.36" y="335.5" ></text>
+</g>
+<g >
+<title>libcudart_static_e760a7280bc1af45ef561886abc194823c5edadb (1,117,251,508 samples, 2.02%)</title><rect x="1166.2" y="517" width="23.8" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="1169.16" y="527.5" >l..</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (55,535,470 samples, 0.10%)</title><rect x="1187.6" y="309" width="1.2" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1190.61" y="319.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point, std::allocator&lt;Point&gt; &gt;::push_back (56,210,901 samples, 0.10%)</title><rect x="201.3" y="469" width="1.2" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="204.29" y="479.5" ></text>
+</g>
+<g >
+<title>operator new (56,318,507 samples, 0.10%)</title><rect x="35.1" y="485" width="1.2" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="38.12" y="495.5" ></text>
+</g>
+<g >
+<title>drm_syncobj_timeline_wait_ioctl (56,291,953 samples, 0.10%)</title><rect x="14.9" y="469" width="1.2" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="17.87" y="479.5" ></text>
+</g>
+<g >
+<title>__libc_free (55,537,579 samples, 0.10%)</title><rect x="108.2" y="325" width="1.2" height="15.0" fill="rgb(223,85,20)" rx="2" ry="2" />
+<text  x="111.23" y="335.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (55,559,539 samples, 0.10%)</title><rect x="1176.9" y="277" width="1.2" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1179.88" y="287.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (168,430,447 samples, 0.30%)</title><rect x="1162.6" y="277" width="3.6" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="1165.56" y="287.5" ></text>
+</g>
+<g >
+<title>cudaDeviceSynchronize (44,535,962,305 samples, 80.55%)</title><rect x="208.5" y="549" width="950.5" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="211.49" y="559.5" >cudaDeviceSynchronize</text>
+</g>
+<g >
+<title>cuMemFree_v2 (111,606,237 samples, 0.20%)</title><rect x="1159.0" y="517" width="2.4" height="15.0" fill="rgb(221,77,18)" rx="2" ry="2" />
+<text  x="1161.98" y="527.5" ></text>
+</g>
+<g >
+<title>std::_Vector_base&lt;Point, std::allocator&lt;Point&gt; &gt;::_M_allocate (56,318,507 samples, 0.10%)</title><rect x="35.1" y="533" width="1.2" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="38.12" y="543.5" ></text>
+</g>
+<g >
+<title>fdget (5,050,505 samples, 0.01%)</title><rect x="10.0" y="469" width="0.1" height="15.0" fill="rgb(241,167,40)" rx="2" ry="2" />
+<text  x="13.00" y="479.5" ></text>
+</g>
+<g >
+<title>std::allocator_traits&lt;std::allocator&lt;Point*&gt; &gt;::deallocate (55,514,510 samples, 0.10%)</title><rect x="114.2" y="357" width="1.2" height="15.0" fill="rgb(244,183,43)" rx="2" ry="2" />
+<text  x="117.21" y="367.5" ></text>
+</g>
+<g >
+<title>drm_ioctl_kernel (56,291,953 samples, 0.10%)</title><rect x="14.9" y="485" width="1.2" height="15.0" fill="rgb(226,101,24)" rx="2" ry="2" />
+<text  x="17.87" y="495.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (557,990,259 samples, 1.01%)</title><rect x="1166.2" y="453" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1169.16" y="463.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (557,990,259 samples, 1.01%)</title><rect x="1166.2" y="405" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1169.16" y="415.5" ></text>
+</g>
+<g >
+<title>tick_do_update_jiffies64 (111,108,259 samples, 0.20%)</title><rect x="1058.8" y="261" width="2.4" height="15.0" fill="rgb(208,14,3)" rx="2" ry="2" />
+<text  x="1061.80" y="271.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt;::base (55,562,449 samples, 0.10%)</title><rect x="200.1" y="453" width="1.2" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="203.11" y="463.5" ></text>
+</g>
+<g >
+<title>[libnvidia-egl-wayland2.so.1.0.1] (56,435,673 samples, 0.10%)</title><rect x="10.1" y="677" width="1.2" height="15.0" fill="rgb(244,181,43)" rx="2" ry="2" />
+<text  x="13.11" y="687.5" ></text>
+</g>
+<g >
+<title>void std::allocator_traits&lt;std::allocator&lt;Point&gt; &gt;::construct&lt;Point, Point const&amp;&gt; (111,895,625 samples, 0.20%)</title><rect x="197.7" y="437" width="2.4" height="15.0" fill="rgb(236,142,34)" rx="2" ry="2" />
+<text  x="200.72" y="447.5" ></text>
+</g>
+<g >
+<title>cudaMalloc (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="549" width="4.8" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="1164.36" y="559.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (559,261,249 samples, 1.01%)</title><rect x="1178.1" y="421" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1181.06" y="431.5" ></text>
+</g>
+<g >
+<title>__raw_spin_lock_irqsave (56,552,630 samples, 0.10%)</title><rect x="1164.9" y="37" width="1.3" height="15.0" fill="rgb(233,132,31)" rx="2" ry="2" />
+<text  x="1167.95" y="47.5" ></text>
+</g>
+<g >
+<title>__dentry_kill (56,435,673 samples, 0.10%)</title><rect x="10.1" y="485" width="1.2" height="15.0" fill="rgb(231,120,28)" rx="2" ry="2" />
+<text  x="13.11" y="495.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,899,296 samples, 0.20%)</title><rect x="1175.7" y="309" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1178.68" y="319.5" ></text>
+</g>
+<g >
+<title>QuadTree::~QuadTree (55,594,597 samples, 0.10%)</title><rect x="145.3" y="501" width="1.1" height="15.0" fill="rgb(229,110,26)" rx="2" ry="2" />
+<text  x="148.25" y="511.5" ></text>
+</g>
+<g >
+<title>std::allocator_traits&lt;std::allocator&lt;Point*&gt; &gt;::deallocate (55,537,579 samples, 0.10%)</title><rect x="108.2" y="341" width="1.2" height="15.0" fill="rgb(244,183,43)" rx="2" ry="2" />
+<text  x="111.23" y="351.5" ></text>
+</g>
+<g >
+<title>__clock_gettime (4,136,744,685 samples, 7.48%)</title><rect x="1061.2" y="421" width="88.3" height="15.0" fill="rgb(236,143,34)" rx="2" ry="2" />
+<text  x="1064.17" y="431.5" >__clock_ge..</text>
+</g>
+<g >
+<title>void std::allocator_traits&lt;std::allocator&lt;Point*&gt; &gt;::construct&lt;Point*, Point* const&amp;&gt; (55,553,182 samples, 0.10%)</title><rect x="141.7" y="469" width="1.2" height="15.0" fill="rgb(222,78,18)" rx="2" ry="2" />
+<text  x="144.68" y="479.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,606,237 samples, 0.20%)</title><rect x="1159.0" y="501" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1161.98" y="511.5" ></text>
+</g>
+<g >
+<title>allocate (56,350,269 samples, 0.10%)</title><rect x="105.8" y="325" width="1.2" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="108.82" y="335.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (56,352,469 samples, 0.10%)</title><rect x="1161.4" y="309" width="1.2" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1164.36" y="319.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (9,702,967,304 samples, 17.55%)</title><rect x="854.1" y="373" width="207.1" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="857.09" y="383.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>allocate (56,359,888 samples, 0.10%)</title><rect x="113.0" y="341" width="1.2" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="116.00" y="351.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,606,237 samples, 0.20%)</title><rect x="1159.0" y="405" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1161.98" y="415.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point, std::allocator&lt;Point&gt; &gt;::push_back (167,260,705 samples, 0.30%)</title><rect x="191.8" y="437" width="3.5" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="194.77" y="447.5" ></text>
+</g>
+<g >
+<title>__ioctl (168,430,447 samples, 0.30%)</title><rect x="1162.6" y="309" width="3.6" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="1165.56" y="319.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="373" width="4.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1164.36" y="383.5" ></text>
+</g>
+<g >
+<title>QuadTree::insert_point (1,677,049,809 samples, 3.03%)</title><rect x="91.6" y="453" width="35.8" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="94.56" y="463.5" >Qua..</text>
+</g>
+<g >
+<title>__libc_malloc (56,463,542 samples, 0.10%)</title><rect x="119.0" y="341" width="1.2" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="121.99" y="351.5" ></text>
+</g>
+<g >
+<title>asm_sysvec_apic_timer_interrupt (55,551,973 samples, 0.10%)</title><rect x="1151.8" y="421" width="1.2" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="1154.85" y="431.5" ></text>
+</g>
+<g >
+<title>QuadTree::~QuadTree (55,594,597 samples, 0.10%)</title><rect x="145.3" y="549" width="1.1" height="15.0" fill="rgb(229,110,26)" rx="2" ry="2" />
+<text  x="148.25" y="559.5" ></text>
+</g>
+<g >
+<title>rmapiAllocWithSecInfo (168,430,447 samples, 0.30%)</title><rect x="1162.6" y="149" width="3.6" height="15.0" fill="rgb(225,92,22)" rx="2" ry="2" />
+<text  x="1165.56" y="159.5" ></text>
+</g>
+<g >
+<title>hrtimer_interrupt (111,108,259 samples, 0.20%)</title><rect x="1058.8" y="309" width="2.4" height="15.0" fill="rgb(228,109,26)" rx="2" ry="2" />
+<text  x="1061.80" y="319.5" ></text>
+</g>
+<g >
+<title>bool __gnu_cxx::operator!=&lt;Point*, std::vector&lt;Point, std::allocator&lt;Point&gt; &gt; &gt; (112,622,160 samples, 0.20%)</title><rect x="24.4" y="581" width="2.4" height="15.0" fill="rgb(226,99,23)" rx="2" ry="2" />
+<text  x="27.43" y="591.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,606,237 samples, 0.20%)</title><rect x="1159.0" y="485" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1161.98" y="495.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (559,261,249 samples, 1.01%)</title><rect x="1178.1" y="453" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1181.06" y="463.5" ></text>
+</g>
+<g >
+<title>std::__is_constant_evaluated (112,053,506 samples, 0.20%)</title><rect x="179.9" y="549" width="2.4" height="15.0" fill="rgb(234,137,32)" rx="2" ry="2" />
+<text  x="182.88" y="559.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::push_back (55,335,819 samples, 0.10%)</title><rect x="126.2" y="437" width="1.2" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="129.17" y="447.5" ></text>
+</g>
+<g >
+<title>void std::__new_allocator&lt;Point*&gt;::construct&lt;Point*, Point* const&amp;&gt; (55,553,469 samples, 0.10%)</title><rect x="133.3" y="421" width="1.2" height="15.0" fill="rgb(236,143,34)" rx="2" ry="2" />
+<text  x="136.32" y="431.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (557,990,259 samples, 1.01%)</title><rect x="1166.2" y="421" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1169.16" y="431.5" ></text>
+</g>
+<g >
+<title>QuadTree::insert_point (502,512,282 samples, 0.91%)</title><rect x="99.9" y="405" width="10.7" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="102.87" y="415.5" ></text>
+</g>
+<g >
+<title>_int_free_chunk (55,514,510 samples, 0.10%)</title><rect x="114.2" y="325" width="1.2" height="15.0" fill="rgb(215,46,11)" rx="2" ry="2" />
+<text  x="117.21" y="335.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (56,408,300 samples, 0.10%)</title><rect x="134.5" y="357" width="1.2" height="15.0" fill="rgb(218,61,14)" rx="2" ry="2" />
+<text  x="137.50" y="367.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (30,683,419,530 samples, 55.50%)</title><rect x="498.2" y="437" width="654.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="501.19" y="447.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (559,261,249 samples, 1.01%)</title><rect x="1178.1" y="389" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1181.06" y="399.5" ></text>
+</g>
+<g >
+<title>base (56,459,861 samples, 0.10%)</title><rect x="206.1" y="565" width="1.2" height="15.0" fill="rgb(208,16,3)" rx="2" ry="2" />
+<text  x="209.09" y="575.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (557,990,259 samples, 1.01%)</title><rect x="1166.2" y="373" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1169.16" y="383.5" ></text>
+</g>
+<g >
+<title>bool __gnu_cxx::operator!=&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt; (55,515,605 samples, 0.10%)</title><rect x="185.8" y="405" width="1.2" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="188.84" y="415.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (55,550,613 samples, 0.10%)</title><rect x="13.7" y="661" width="1.2" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="16.68" y="671.5" ></text>
+</g>
+<g >
+<title>std::_Vector_base&lt;Point*, std::allocator&lt;Point*&gt; &gt;::_M_deallocate (55,537,579 samples, 0.10%)</title><rect x="108.2" y="357" width="1.2" height="15.0" fill="rgb(207,11,2)" rx="2" ry="2" />
+<text  x="111.23" y="367.5" ></text>
+</g>
+<g >
+<title>resservResourceFactory (55,545,073 samples, 0.10%)</title><rect x="1163.8" y="85" width="1.1" height="15.0" fill="rgb(208,16,4)" rx="2" ry="2" />
+<text  x="1166.76" y="95.5" ></text>
+</g>
+<g >
+<title>nvidia_unlocked_ioctl (168,430,447 samples, 0.30%)</title><rect x="1162.6" y="229" width="3.6" height="15.0" fill="rgb(241,170,40)" rx="2" ry="2" />
+<text  x="1165.56" y="239.5" ></text>
+</g>
+<g >
+<title>QuadTree::~QuadTree (55,594,597 samples, 0.10%)</title><rect x="145.3" y="517" width="1.1" height="15.0" fill="rgb(229,110,26)" rx="2" ry="2" />
+<text  x="148.25" y="527.5" ></text>
+</g>
+<g >
+<title>do_poll.constprop.0 (5,050,505 samples, 0.01%)</title><rect x="10.0" y="485" width="0.1" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="13.00" y="495.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt;::__normal_iterator (56,377,266 samples, 0.10%)</title><rect x="107.0" y="357" width="1.2" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="110.02" y="367.5" ></text>
+</g>
+<g >
+<title>QuadTree::insert_point (5,103,993,082 samples, 9.23%)</title><rect x="36.3" y="565" width="109.0" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="39.32" y="575.5" >QuadTree::ins..</text>
+</g>
+<g >
+<title>do_syscall_64 (56,435,673 samples, 0.10%)</title><rect x="10.1" y="613" width="1.2" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="13.11" y="623.5" ></text>
+</g>
+<g >
+<title>update_wall_time (111,108,259 samples, 0.20%)</title><rect x="1058.8" y="245" width="2.4" height="15.0" fill="rgb(207,11,2)" rx="2" ry="2" />
+<text  x="1061.80" y="255.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (56,291,953 samples, 0.10%)</title><rect x="14.9" y="581" width="1.2" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="17.87" y="591.5" ></text>
+</g>
+<g >
+<title>QuadTree::~QuadTree (55,594,597 samples, 0.10%)</title><rect x="145.3" y="565" width="1.1" height="15.0" fill="rgb(229,110,26)" rx="2" ry="2" />
+<text  x="148.25" y="575.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (5,050,505 samples, 0.01%)</title><rect x="10.0" y="549" width="0.1" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="13.00" y="559.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="437" width="4.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1164.36" y="447.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (44,535,962,305 samples, 80.55%)</title><rect x="208.5" y="501" width="950.5" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="211.49" y="511.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>deallocate (55,514,510 samples, 0.10%)</title><rect x="114.2" y="341" width="1.2" height="15.0" fill="rgb(208,14,3)" rx="2" ry="2" />
+<text  x="117.21" y="351.5" ></text>
+</g>
+<g >
+<title>void std::__new_allocator&lt;Point&gt;::construct&lt;Point, Point const&amp;&gt; (167,260,705 samples, 0.30%)</title><rect x="191.8" y="405" width="3.5" height="15.0" fill="rgb(250,207,49)" rx="2" ry="2" />
+<text  x="194.77" y="415.5" ></text>
+</g>
+<g >
+<title>Nv04AllocWithAccessSecInfo (168,430,447 samples, 0.30%)</title><rect x="1162.6" y="181" width="3.6" height="15.0" fill="rgb(244,182,43)" rx="2" ry="2" />
+<text  x="1165.56" y="191.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (559,261,249 samples, 1.01%)</title><rect x="1178.1" y="405" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1181.06" y="415.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (559,261,249 samples, 1.01%)</title><rect x="1178.1" y="373" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1181.06" y="383.5" ></text>
+</g>
+<g >
+<title>QuadTree::flatten (1,059,430,489 samples, 1.92%)</title><rect x="182.3" y="549" width="22.6" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="185.27" y="559.5" >Q..</text>
+</g>
+<g >
+<title>libcudart_static_f74e2f2bcf2cf49bd1a61332e1d15bd1e748f9cf (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="533" width="4.8" height="15.0" fill="rgb(252,220,52)" rx="2" ry="2" />
+<text  x="1164.36" y="543.5" ></text>
+</g>
+<g >
+<title>dput.part.0 (56,435,673 samples, 0.10%)</title><rect x="10.1" y="517" width="1.2" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="13.11" y="527.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (55,550,613 samples, 0.10%)</title><rect x="13.7" y="645" width="1.2" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="16.68" y="655.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (5,050,505 samples, 0.01%)</title><rect x="10.0" y="613" width="0.1" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="13.00" y="623.5" ></text>
+</g>
+<g >
+<title>allocate (55,547,542 samples, 0.10%)</title><rect x="138.1" y="421" width="1.2" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="141.09" y="431.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point, std::allocator&lt;Point&gt; &gt;::reserve (56,318,507 samples, 0.10%)</title><rect x="35.1" y="549" width="1.2" height="15.0" fill="rgb(220,72,17)" rx="2" ry="2" />
+<text  x="38.12" y="559.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,606,237 samples, 0.20%)</title><rect x="1159.0" y="389" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1161.98" y="399.5" ></text>
+</g>
+<g >
+<title>[[vdso]] (3,969,751,665 samples, 7.18%)</title><rect x="1064.7" y="405" width="84.8" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="1067.74" y="415.5" >[[vdso]]</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (502,410,537 samples, 0.91%)</title><rect x="1167.3" y="341" width="10.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1170.34" y="351.5" ></text>
+</g>
+<g >
+<title>__hrtimer_run_queues (111,108,259 samples, 0.20%)</title><rect x="1058.8" y="293" width="2.4" height="15.0" fill="rgb(237,150,35)" rx="2" ry="2" />
+<text  x="1061.80" y="303.5" ></text>
+</g>
+<g >
+<title>display_loop (55,005,880,256 samples, 99.49%)</title><rect x="16.1" y="597" width="1173.9" height="15.0" fill="rgb(247,197,47)" rx="2" ry="2" />
+<text  x="19.07" y="607.5" >display_loop</text>
+</g>
+<g >
+<title>bool __gnu_cxx::operator!=&lt;Point*, std::vector&lt;Point, std::allocator&lt;Point&gt; &gt; &gt; (111,721,295 samples, 0.20%)</title><rect x="148.8" y="565" width="2.4" height="15.0" fill="rgb(226,99,23)" rx="2" ry="2" />
+<text  x="151.85" y="575.5" ></text>
+</g>
+<g >
+<title>QuadTree::insert_point (3,035,575,609 samples, 5.49%)</title><rect x="74.5" y="485" width="64.8" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="77.49" y="495.5" >QuadTre..</text>
+</g>
+<g >
+<title>QuadTree::flatten (612,459,753 samples, 1.11%)</title><rect x="182.3" y="453" width="13.0" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="185.27" y="463.5" ></text>
+</g>
+<g >
+<title>std::allocator_traits&lt;std::allocator&lt;Point&gt; &gt;::allocate (56,318,507 samples, 0.10%)</title><rect x="35.1" y="517" width="1.2" height="15.0" fill="rgb(214,44,10)" rx="2" ry="2" />
+<text  x="38.12" y="527.5" ></text>
+</g>
+<g >
+<title>portSyncSpinlockAcquire (56,552,630 samples, 0.10%)</title><rect x="1164.9" y="85" width="1.3" height="15.0" fill="rgb(212,36,8)" rx="2" ry="2" />
+<text  x="1167.95" y="95.5" ></text>
+</g>
+<g >
+<title>_M_allocate (56,463,542 samples, 0.10%)</title><rect x="119.0" y="389" width="1.2" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="121.99" y="399.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (168,430,447 samples, 0.30%)</title><rect x="1162.6" y="261" width="3.6" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="1165.56" y="271.5" ></text>
+</g>
+<g >
+<title>QuadTree::insert_point (4,658,320,488 samples, 8.43%)</title><rect x="45.8" y="549" width="99.5" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="48.83" y="559.5" >QuadTree::in..</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="357" width="4.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1164.36" y="367.5" ></text>
+</g>
+<g >
+<title>__clock_gettime (56,315,000 samples, 0.10%)</title><rect x="1188.8" y="357" width="1.2" height="15.0" fill="rgb(236,143,34)" rx="2" ry="2" />
+<text  x="1191.80" y="367.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (557,990,259 samples, 1.01%)</title><rect x="1166.2" y="437" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1169.16" y="447.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (44,535,962,305 samples, 80.55%)</title><rect x="208.5" y="485" width="950.5" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="211.49" y="495.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>std::vector&lt;Point, std::allocator&lt;Point&gt; &gt;::push_back (223,326,877 samples, 0.40%)</title><rect x="195.3" y="453" width="4.8" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="198.34" y="463.5" ></text>
+</g>
+<g >
+<title>void std::allocator_traits&lt;std::allocator&lt;Point*&gt; &gt;::construct&lt;Point*, Point* const&amp;&gt; (55,553,469 samples, 0.10%)</title><rect x="133.3" y="437" width="1.2" height="15.0" fill="rgb(222,78,18)" rx="2" ry="2" />
+<text  x="136.32" y="447.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point, std::allocator&lt;Point&gt; &gt;::push_back (55,554,510 samples, 0.10%)</title><rect x="189.4" y="421" width="1.2" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="192.40" y="431.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="453" width="4.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1164.36" y="463.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,899,296 samples, 0.20%)</title><rect x="1175.7" y="325" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1178.68" y="335.5" ></text>
+</g>
+<g >
+<title>[unknown] (111,842,566 samples, 0.20%)</title><rect x="13.7" y="677" width="2.4" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="16.68" y="687.5" ></text>
+</g>
+<g >
+<title>QuadTree::flatten (55,517,515 samples, 0.10%)</title><rect x="183.5" y="405" width="1.1" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="186.46" y="415.5" ></text>
+</g>
+<g >
+<title>_find_next_bit (55,551,973 samples, 0.10%)</title><rect x="1151.8" y="261" width="1.2" height="15.0" fill="rgb(230,116,27)" rx="2" ry="2" />
+<text  x="1154.85" y="271.5" ></text>
+</g>
+<g >
+<title>void std::allocator_traits&lt;std::allocator&lt;Point&gt; &gt;::construct&lt;Point, Point const&amp;&gt; (55,553,368 samples, 0.10%)</title><rect x="187.0" y="389" width="1.2" height="15.0" fill="rgb(236,142,34)" rx="2" ry="2" />
+<text  x="190.03" y="399.5" ></text>
+</g>
+<g >
+<title>uvm_api_map_external_allocation (56,352,469 samples, 0.10%)</title><rect x="1161.4" y="165" width="1.2" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="1164.36" y="175.5" ></text>
+</g>
+<g >
+<title>QuadTree::insert_point (278,545,273 samples, 0.50%)</title><rect x="101.1" y="389" width="5.9" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="104.08" y="399.5" ></text>
+</g>
+<g >
+<title>__timekeeping_advance (55,551,493 samples, 0.10%)</title><rect x="1058.8" y="229" width="1.2" height="15.0" fill="rgb(250,208,49)" rx="2" ry="2" />
+<text  x="1061.80" y="239.5" ></text>
+</g>
+<g >
+<title>mapInit_IMPL (56,332,744 samples, 0.10%)</title><rect x="1162.6" y="69" width="1.2" height="15.0" fill="rgb(209,18,4)" rx="2" ry="2" />
+<text  x="1165.56" y="79.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (55,535,470 samples, 0.10%)</title><rect x="1187.6" y="341" width="1.2" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1190.61" y="351.5" ></text>
+</g>
+<g >
+<title>Point::doPhysics (1,007,898,938 samples, 1.82%)</title><rect x="160.8" y="565" width="21.5" height="15.0" fill="rgb(205,1,0)" rx="2" ry="2" />
+<text  x="163.76" y="575.5" >P..</text>
+</g>
+<g >
+<title>bool __gnu_cxx::operator!=&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt; (111,155,546 samples, 0.20%)</title><rect x="128.6" y="453" width="2.3" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="131.56" y="463.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="469" width="4.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1164.36" y="479.5" ></text>
+</g>
+<g >
+<title>rm_ioctl (168,430,447 samples, 0.30%)</title><rect x="1162.6" y="213" width="3.6" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="1165.56" y="223.5" ></text>
+</g>
+<g >
+<title>forward&lt;Point* const&amp;&gt; (56,390,662 samples, 0.10%)</title><rect x="116.6" y="421" width="1.2" height="15.0" fill="rgb(230,116,27)" rx="2" ry="2" />
+<text  x="119.60" y="431.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::end (56,377,266 samples, 0.10%)</title><rect x="107.0" y="373" width="1.2" height="15.0" fill="rgb(254,227,54)" rx="2" ry="2" />
+<text  x="110.02" y="383.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="405" width="4.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1164.36" y="415.5" ></text>
+</g>
+<g >
+<title>stars (55,285,254,556 samples, 99.99%)</title><rect x="10.1" y="693" width="1179.9" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="13.11" y="703.5" >stars</text>
+</g>
+<g >
+<title>_M_allocate (55,547,542 samples, 0.10%)</title><rect x="138.1" y="437" width="1.2" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="141.09" y="447.5" ></text>
+</g>
+<g >
+<title>serverTopLock_Epilogue (56,552,630 samples, 0.10%)</title><rect x="1164.9" y="117" width="1.3" height="15.0" fill="rgb(209,19,4)" rx="2" ry="2" />
+<text  x="1167.95" y="127.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (56,552,630 samples, 0.10%)</title><rect x="1164.9" y="53" width="1.3" height="15.0" fill="rgb(247,195,46)" rx="2" ry="2" />
+<text  x="1167.95" y="63.5" ></text>
+</g>
+<g >
+<title>__poll (5,050,505 samples, 0.01%)</title><rect x="10.0" y="597" width="0.1" height="15.0" fill="rgb(250,208,49)" rx="2" ry="2" />
+<text  x="13.00" y="607.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (56,352,469 samples, 0.10%)</title><rect x="1161.4" y="277" width="1.2" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="1164.36" y="287.5" ></text>
+</g>
+<g >
+<title>cuMemcpyDtoH_v2 (557,990,259 samples, 1.01%)</title><rect x="1166.2" y="501" width="11.9" height="15.0" fill="rgb(249,206,49)" rx="2" ry="2" />
+<text  x="1169.16" y="511.5" ></text>
+</g>
+<g >
+<title>void std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::_M_realloc_insert&lt;Point* const&amp;&gt; (56,463,542 samples, 0.10%)</title><rect x="119.0" y="405" width="1.2" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="121.99" y="415.5" ></text>
+</g>
+<g >
+<title>QuadTree::flatten (1,059,430,489 samples, 1.92%)</title><rect x="182.3" y="565" width="22.6" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="185.27" y="575.5" >Q..</text>
+</g>
+<g >
+<title>sysvec_apic_timer_interrupt (111,108,259 samples, 0.20%)</title><rect x="1058.8" y="341" width="2.4" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="1061.80" y="351.5" ></text>
+</g>
+<g >
+<title>sysvec_apic_timer_interrupt (55,551,973 samples, 0.10%)</title><rect x="1151.8" y="405" width="1.2" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="1154.85" y="415.5" ></text>
+</g>
+<g >
+<title>QuadTree::insert_point (3,931,477,931 samples, 7.11%)</title><rect x="60.2" y="501" width="83.9" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="63.16" y="511.5" >QuadTree:..</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,606,237 samples, 0.20%)</title><rect x="1159.0" y="469" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1161.98" y="479.5" ></text>
+</g>
+<g >
+<title>QuadTree::insert_point (111,097,973 samples, 0.20%)</title><rect x="102.3" y="373" width="2.3" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="105.26" y="383.5" ></text>
+</g>
+<g >
+<title>_tlsEntryRelease (56,552,630 samples, 0.10%)</title><rect x="1164.9" y="101" width="1.3" height="15.0" fill="rgb(231,124,29)" rx="2" ry="2" />
+<text  x="1167.95" y="111.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (55,556,766 samples, 0.10%)</title><rect x="1060.0" y="229" width="1.2" height="15.0" fill="rgb(247,195,46)" rx="2" ry="2" />
+<text  x="1062.99" y="239.5" ></text>
+</g>
+<g >
+<title>[unknown]  (55,555,467 samples, 0.10%)</title><rect x="12.5" y="677" width="1.2" height="15.0" fill="rgb(253,223,53)" rx="2" ry="2" />
+<text  x="15.50" y="687.5" ></text>
+</g>
+<g >
+<title>base (56,395,417 samples, 0.10%)</title><rect x="147.6" y="565" width="1.2" height="15.0" fill="rgb(208,16,3)" rx="2" ry="2" />
+<text  x="150.64" y="575.5" ></text>
+</g>
+<g >
+<title>forward&lt;Point* const&amp;&gt; (55,553,469 samples, 0.10%)</title><rect x="133.3" y="405" width="1.2" height="15.0" fill="rgb(230,116,27)" rx="2" ry="2" />
+<text  x="136.32" y="415.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="341" width="4.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1164.36" y="351.5" ></text>
+</g>
+<g >
+<title>__sysvec_apic_timer_interrupt (111,108,259 samples, 0.20%)</title><rect x="1058.8" y="325" width="2.4" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="1061.80" y="335.5" ></text>
+</g>
+<g >
+<title>__syscall_cancel_arch (56,435,673 samples, 0.10%)</title><rect x="10.1" y="645" width="1.2" height="15.0" fill="rgb(239,157,37)" rx="2" ry="2" />
+<text  x="13.11" y="655.5" ></text>
+</g>
+<g >
+<title>QuadTree::QuadTree (56,318,507 samples, 0.10%)</title><rect x="35.1" y="565" width="1.2" height="15.0" fill="rgb(242,174,41)" rx="2" ry="2" />
+<text  x="38.12" y="575.5" ></text>
+</g>
+<g >
+<title>void std::allocator_traits&lt;std::allocator&lt;Point&gt; &gt;::construct&lt;Point, Point const&amp;&gt; (56,281,203 samples, 0.10%)</title><rect x="203.7" y="501" width="1.2" height="15.0" fill="rgb(236,142,34)" rx="2" ry="2" />
+<text  x="206.68" y="511.5" ></text>
+</g>
+<g >
+<title>serverAllocResource (168,430,447 samples, 0.30%)</title><rect x="1162.6" y="133" width="3.6" height="15.0" fill="rgb(232,126,30)" rx="2" ry="2" />
+<text  x="1165.56" y="143.5" ></text>
+</g>
+<g >
+<title>forward&lt;const Point&amp;&gt; (56,281,203 samples, 0.10%)</title><rect x="203.7" y="485" width="1.2" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="206.68" y="495.5" ></text>
+</g>
+<g >
+<title>allocate (56,318,507 samples, 0.10%)</title><rect x="35.1" y="501" width="1.2" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="38.12" y="511.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::push_back (279,414,924 samples, 0.51%)</title><rect x="130.9" y="453" width="6.0" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="133.93" y="463.5" ></text>
+</g>
+<g >
+<title>nv_drm_ioctl (56,291,953 samples, 0.10%)</title><rect x="14.9" y="517" width="1.2" height="15.0" fill="rgb(244,183,43)" rx="2" ry="2" />
+<text  x="17.87" y="527.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (5,050,505 samples, 0.01%)</title><rect x="10.0" y="629" width="0.1" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="13.00" y="639.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::size (55,551,058 samples, 0.10%)</title><rect x="109.4" y="357" width="1.2" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="112.41" y="367.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (56,318,507 samples, 0.10%)</title><rect x="35.1" y="469" width="1.2" height="15.0" fill="rgb(218,61,14)" rx="2" ry="2" />
+<text  x="38.12" y="479.5" ></text>
+</g>
+<g >
+<title>operator new (56,359,888 samples, 0.10%)</title><rect x="113.0" y="325" width="1.2" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="116.00" y="335.5" ></text>
+</g>
+<g >
+<title>void std::allocator_traits&lt;std::allocator&lt;Point&gt; &gt;::construct&lt;Point, Point const&amp;&gt; (167,260,705 samples, 0.30%)</title><rect x="191.8" y="421" width="3.5" height="15.0" fill="rgb(236,142,34)" rx="2" ry="2" />
+<text  x="194.77" y="431.5" ></text>
+</g>
+<g >
+<title>base (56,434,212 samples, 0.10%)</title><rect x="207.3" y="549" width="1.2" height="15.0" fill="rgb(208,16,3)" rx="2" ry="2" />
+<text  x="210.29" y="559.5" ></text>
+</g>
+<g >
+<title>uvm_ioctl (56,352,469 samples, 0.10%)</title><rect x="1161.4" y="181" width="1.2" height="15.0" fill="rgb(245,187,44)" rx="2" ry="2" />
+<text  x="1164.36" y="191.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (17,494,063,497 samples, 31.64%)</title><rect x="687.8" y="389" width="373.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="690.82" y="399.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;Point*, std::vector&lt;Point, std::allocator&lt;Point&gt; &gt; &gt;::operator* (111,929,564 samples, 0.20%)</title><rect x="18.5" y="581" width="2.4" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="21.47" y="591.5" ></text>
+</g>
+<g >
+<title>[libnvidia-egl-wayland2.so.1.0.1] (56,291,953 samples, 0.10%)</title><rect x="14.9" y="645" width="1.2" height="15.0" fill="rgb(244,181,43)" rx="2" ry="2" />
+<text  x="17.87" y="655.5" ></text>
+</g>
+<g >
+<title>void std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::_M_realloc_insert&lt;Point* const&amp;&gt; (55,547,542 samples, 0.10%)</title><rect x="138.1" y="453" width="1.2" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="141.09" y="463.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;Point*, std::vector&lt;Point, std::allocator&lt;Point&gt; &gt; &gt;::operator++ (167,162,241 samples, 0.30%)</title><rect x="20.9" y="581" width="3.5" height="15.0" fill="rgb(220,73,17)" rx="2" ry="2" />
+<text  x="23.86" y="591.5" ></text>
+</g>
+<g >
+<title>QuadTree::flatten (835,786,630 samples, 1.51%)</title><rect x="182.3" y="469" width="17.8" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="185.27" y="479.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (559,261,249 samples, 1.01%)</title><rect x="1178.1" y="469" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1181.06" y="479.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point, std::allocator&lt;Point&gt; &gt;::push_back (56,281,203 samples, 0.10%)</title><rect x="203.7" y="517" width="1.2" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="206.68" y="527.5" ></text>
+</g>
+<g >
+<title>glm::vec&lt;2, float,  (55,589,306 samples, 0.10%)</title><rect x="202.5" y="501" width="1.2" height="15.0" fill="rgb(250,210,50)" rx="2" ry="2" />
+<text  x="205.49" y="511.5" ></text>
+</g>
+<g >
+<title>allocate (56,408,300 samples, 0.10%)</title><rect x="134.5" y="405" width="1.2" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="137.50" y="415.5" ></text>
+</g>
+<g >
+<title>__vdso_clock_gettime (111,857,760 samples, 0.20%)</title><rect x="1149.5" y="421" width="2.3" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="1152.46" y="431.5" ></text>
+</g>
+<g >
+<title>void std::__new_allocator&lt;Point*&gt;::construct&lt;Point*, Point* const&amp;&gt; (55,553,182 samples, 0.10%)</title><rect x="141.7" y="453" width="1.2" height="15.0" fill="rgb(236,143,34)" rx="2" ry="2" />
+<text  x="144.68" y="463.5" ></text>
+</g>
+<g >
+<title>void std::__new_allocator&lt;Point*&gt;::construct&lt;Point*, Point* const&amp;&gt; (56,459,107 samples, 0.10%)</title><rect x="111.8" y="373" width="1.2" height="15.0" fill="rgb(236,143,34)" rx="2" ry="2" />
+<text  x="114.80" y="383.5" ></text>
+</g>
+<g >
+<title>_S_relocate (56,230,496 samples, 0.10%)</title><rect x="142.9" y="453" width="1.2" height="15.0" fill="rgb(228,107,25)" rx="2" ry="2" />
+<text  x="145.87" y="463.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt;::operator* (56,382,443 samples, 0.10%)</title><rect x="139.3" y="485" width="1.2" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="142.27" y="495.5" ></text>
+</g>
+<g >
+<title>operator new (56,459,107 samples, 0.10%)</title><rect x="111.8" y="357" width="1.2" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="114.80" y="367.5" ></text>
+</g>
+<g >
+<title>start_thread (5,050,505 samples, 0.01%)</title><rect x="10.0" y="661" width="0.1" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="13.00" y="671.5" ></text>
+</g>
+<g >
+<title>cuda-EvtHandlr (5,050,505 samples, 0.01%)</title><rect x="10.0" y="693" width="0.1" height="15.0" fill="rgb(215,46,11)" rx="2" ry="2" />
+<text  x="13.00" y="703.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,606,237 samples, 0.20%)</title><rect x="1159.0" y="421" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1161.98" y="431.5" ></text>
+</g>
+<g >
+<title>void std::__new_allocator&lt;Point&gt;::construct&lt;Point, Point const&amp;&gt; (55,553,368 samples, 0.10%)</title><rect x="187.0" y="373" width="1.2" height="15.0" fill="rgb(250,207,49)" rx="2" ry="2" />
+<text  x="190.03" y="383.5" ></text>
+</g>
+<g >
+<title>os_acquire_spinlock (56,552,630 samples, 0.10%)</title><rect x="1164.9" y="69" width="1.3" height="15.0" fill="rgb(206,6,1)" rx="2" ry="2" />
+<text  x="1167.95" y="79.5" ></text>
+</g>
+<g >
+<title>bool __gnu_cxx::operator!=&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt; (111,912,542 samples, 0.20%)</title><rect x="123.8" y="437" width="2.4" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="126.78" y="447.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (557,990,259 samples, 1.01%)</title><rect x="1166.2" y="389" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1169.16" y="399.5" ></text>
+</g>
+<g >
+<title>operator new (56,408,300 samples, 0.10%)</title><rect x="134.5" y="373" width="1.2" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="137.50" y="383.5" ></text>
+</g>
+<g >
+<title>asm_sysvec_apic_timer_interrupt (111,108,259 samples, 0.20%)</title><rect x="1058.8" y="357" width="2.4" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="1061.80" y="367.5" ></text>
+</g>
+<g >
+<title>__ioctl (56,352,469 samples, 0.10%)</title><rect x="1161.4" y="293" width="1.2" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="1164.36" y="303.5" ></text>
+</g>
+<g >
+<title>cudaFree (111,606,237 samples, 0.20%)</title><rect x="1159.0" y="549" width="2.4" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="1161.98" y="559.5" ></text>
+</g>
+<g >
+<title>__syscall_cancel_arch (5,050,505 samples, 0.01%)</title><rect x="10.0" y="581" width="0.1" height="15.0" fill="rgb(239,157,37)" rx="2" ry="2" />
+<text  x="13.00" y="591.5" ></text>
+</g>
+<g >
+<title>QuadTree::flatten (1,003,149,286 samples, 1.81%)</title><rect x="182.3" y="517" width="21.4" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="185.27" y="527.5" >Q..</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (559,261,249 samples, 1.01%)</title><rect x="1178.1" y="485" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1181.06" y="495.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (168,430,447 samples, 0.30%)</title><rect x="1162.6" y="293" width="3.6" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="1165.56" y="303.5" ></text>
+</g>
+<g >
+<title>multimapInit_IMPL (56,332,744 samples, 0.10%)</title><rect x="1162.6" y="85" width="1.2" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="1165.56" y="95.5" ></text>
+</g>
+<g >
+<title>void std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::_M_realloc_insert&lt;Point* const&amp;&gt; (111,960,034 samples, 0.20%)</title><rect x="134.5" y="437" width="2.4" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="137.50" y="447.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::push_back (167,465,903 samples, 0.30%)</title><rect x="107.0" y="389" width="3.6" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="110.02" y="399.5" ></text>
+</g>
+<g >
+<title>glm::vec&lt;2, float,  (55,551,945 samples, 0.10%)</title><rect x="190.6" y="437" width="1.2" height="15.0" fill="rgb(250,210,50)" rx="2" ry="2" />
+<text  x="193.59" y="447.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (56,291,953 samples, 0.10%)</title><rect x="14.9" y="549" width="1.2" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="17.87" y="559.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (56,054,398 samples, 0.10%)</title><rect x="1160.2" y="357" width="1.2" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1163.16" y="367.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (559,261,249 samples, 1.01%)</title><rect x="1178.1" y="437" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1181.06" y="447.5" ></text>
+</g>
+<g >
+<title>__ioctl (55,550,613 samples, 0.10%)</title><rect x="13.7" y="629" width="1.2" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="16.68" y="639.5" ></text>
+</g>
+<g >
+<title>__libc_start_call_main (55,005,880,256 samples, 99.49%)</title><rect x="16.1" y="629" width="1173.9" height="15.0" fill="rgb(210,26,6)" rx="2" ry="2" />
+<text  x="19.07" y="639.5" >__libc_start_call_main</text>
+</g>
+<g >
+<title>libcudart_static_c64d4787e94fe64d8e27ede30dfe20c11b592bde (111,606,237 samples, 0.20%)</title><rect x="1159.0" y="533" width="2.4" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="1161.98" y="543.5" ></text>
+</g>
+<g >
+<title>RmIoctl (168,430,447 samples, 0.30%)</title><rect x="1162.6" y="197" width="3.6" height="15.0" fill="rgb(254,227,54)" rx="2" ry="2" />
+<text  x="1165.56" y="207.5" ></text>
+</g>
+<g >
+<title>QuadTree::insert_point (4,490,973,901 samples, 8.12%)</title><rect x="49.4" y="533" width="95.9" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="52.40" y="543.5" >QuadTree::i..</text>
+</g>
+<g >
+<title>glm::vec&lt;2, float,  (55,517,515 samples, 0.10%)</title><rect x="183.5" y="389" width="1.1" height="15.0" fill="rgb(250,210,50)" rx="2" ry="2" />
+<text  x="186.46" y="399.5" ></text>
+</g>
+<g >
+<title>drm_ioctl (56,291,953 samples, 0.10%)</title><rect x="14.9" y="501" width="1.2" height="15.0" fill="rgb(231,121,29)" rx="2" ry="2" />
+<text  x="17.87" y="511.5" ></text>
+</g>
+<g >
+<title>__x64_sys_ioctl (56,291,953 samples, 0.10%)</title><rect x="14.9" y="533" width="1.2" height="15.0" fill="rgb(249,204,49)" rx="2" ry="2" />
+<text  x="17.87" y="543.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (111,606,237 samples, 0.20%)</title><rect x="1159.0" y="437" width="2.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1161.98" y="447.5" ></text>
+</g>
+<g >
+<title>QuadTree::flatten (947,559,980 samples, 1.71%)</title><rect x="182.3" y="485" width="20.2" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="185.27" y="495.5" ></text>
+</g>
+<g >
+<title>_M_allocate (56,350,269 samples, 0.10%)</title><rect x="105.8" y="341" width="1.2" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="108.82" y="351.5" ></text>
+</g>
+<g >
+<title>do_sys_poll (5,050,505 samples, 0.01%)</title><rect x="10.0" y="501" width="0.1" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="13.00" y="511.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (557,990,259 samples, 1.01%)</title><rect x="1166.2" y="357" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1169.16" y="367.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt;::base (56,375,517 samples, 0.10%)</title><rect x="184.6" y="405" width="1.2" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="187.64" y="415.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (5,050,505 samples, 0.01%)</title><rect x="10.0" y="533" width="0.1" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="13.00" y="543.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (56,435,673 samples, 0.10%)</title><rect x="10.1" y="629" width="1.2" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="13.11" y="639.5" ></text>
+</g>
+<g >
+<title>dput (56,435,673 samples, 0.10%)</title><rect x="10.1" y="533" width="1.2" height="15.0" fill="rgb(238,155,37)" rx="2" ry="2" />
+<text  x="13.11" y="543.5" ></text>
+</g>
+<g >
+<title>void std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::_M_realloc_insert&lt;Point* const&amp;&gt; (56,350,269 samples, 0.10%)</title><rect x="105.8" y="357" width="1.2" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="108.82" y="367.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (56,352,469 samples, 0.10%)</title><rect x="1161.4" y="261" width="1.2" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="1164.36" y="271.5" ></text>
+</g>
+<g >
+<title>__pi_memset (56,332,744 samples, 0.10%)</title><rect x="1162.6" y="53" width="1.2" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="1165.56" y="63.5" ></text>
+</g>
+<g >
+<title>drmSyncobjTimelineWait (56,291,953 samples, 0.10%)</title><rect x="14.9" y="629" width="1.2" height="15.0" fill="rgb(241,167,40)" rx="2" ry="2" />
+<text  x="17.87" y="639.5" ></text>
+</g>
+<g >
+<title>__hrtimer_run_queues (55,551,973 samples, 0.10%)</title><rect x="1151.8" y="357" width="1.2" height="15.0" fill="rgb(237,150,35)" rx="2" ry="2" />
+<text  x="1154.85" y="367.5" ></text>
+</g>
+<g >
+<title>QuadTree::flatten (389,647,103 samples, 0.70%)</title><rect x="182.3" y="437" width="8.3" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="185.27" y="447.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (44,535,962,305 samples, 80.55%)</title><rect x="208.5" y="453" width="950.5" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="211.49" y="463.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>uvm_unlocked_ioctl_entry (56,352,469 samples, 0.10%)</title><rect x="1161.4" y="213" width="1.2" height="15.0" fill="rgb(227,104,24)" rx="2" ry="2" />
+<text  x="1164.36" y="223.5" ></text>
+</g>
+<g >
+<title>sched_tick (55,551,973 samples, 0.10%)</title><rect x="1151.8" y="309" width="1.2" height="15.0" fill="rgb(238,155,37)" rx="2" ry="2" />
+<text  x="1154.85" y="319.5" ></text>
+</g>
+<g >
+<title>_clientAllocResourceHelper (111,877,817 samples, 0.20%)</title><rect x="1162.6" y="101" width="2.3" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="1165.56" y="111.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::end (55,335,819 samples, 0.10%)</title><rect x="126.2" y="421" width="1.2" height="15.0" fill="rgb(254,227,54)" rx="2" ry="2" />
+<text  x="129.17" y="431.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (19,284,068,384 samples, 34.88%)</title><rect x="649.6" y="405" width="411.6" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="652.61" y="415.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="485" width="4.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1164.36" y="495.5" ></text>
+</g>
+<g >
+<title>allocate (56,359,888 samples, 0.10%)</title><rect x="113.0" y="357" width="1.2" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="116.00" y="367.5" ></text>
+</g>
+<g >
+<title>tcache_put (55,537,579 samples, 0.10%)</title><rect x="108.2" y="309" width="1.2" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="111.23" y="319.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::push_back (55,547,542 samples, 0.10%)</title><rect x="138.1" y="469" width="1.2" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="141.09" y="479.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt;::operator++ (56,432,523 samples, 0.10%)</title><rect x="127.4" y="453" width="1.2" height="15.0" fill="rgb(206,9,2)" rx="2" ry="2" />
+<text  x="130.35" y="463.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (334,535,657 samples, 0.61%)</title><rect x="1181.7" y="357" width="7.1" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1184.66" y="367.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (224,782,916 samples, 0.41%)</title><rect x="1161.4" y="421" width="4.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1164.36" y="431.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt;::operator* (111,756,965 samples, 0.20%)</title><rect x="121.4" y="437" width="2.4" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="124.40" y="447.5" ></text>
+</g>
+<g >
+<title>uvm_unlocked_ioctl_entry.part.0 (56,352,469 samples, 0.10%)</title><rect x="1161.4" y="197" width="1.2" height="15.0" fill="rgb(237,148,35)" rx="2" ry="2" />
+<text  x="1164.36" y="207.5" ></text>
+</g>
+<g >
+<title>_M_allocate (56,359,888 samples, 0.10%)</title><rect x="113.0" y="373" width="1.2" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="116.00" y="383.5" ></text>
+</g>
+<g >
+<title>operator-&lt;Point**, std::vector&lt;Point*&gt; &gt; (55,551,734 samples, 0.10%)</title><rect x="135.7" y="421" width="1.2" height="15.0" fill="rgb(237,149,35)" rx="2" ry="2" />
+<text  x="138.71" y="431.5" ></text>
+</g>
+<g >
+<title>allocate (56,350,269 samples, 0.10%)</title><rect x="105.8" y="309" width="1.2" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="108.82" y="319.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::push_back (55,545,445 samples, 0.10%)</title><rect x="102.3" y="357" width="1.1" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="105.26" y="367.5" ></text>
+</g>
+<g >
+<title>[libnvidia-egl-wayland2.so.1.0.1] (56,291,953 samples, 0.10%)</title><rect x="14.9" y="661" width="1.2" height="15.0" fill="rgb(244,181,43)" rx="2" ry="2" />
+<text  x="17.87" y="671.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (557,990,259 samples, 1.01%)</title><rect x="1166.2" y="469" width="11.9" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1169.16" y="479.5" ></text>
+</g>
+<g >
+<title>_M_allocate (56,408,300 samples, 0.10%)</title><rect x="134.5" y="421" width="1.2" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="137.50" y="431.5" ></text>
+</g>
+<g >
+<title>float const&amp; std::min&lt;float&gt; (111,664,893 samples, 0.20%)</title><rect x="177.5" y="549" width="2.4" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="180.50" y="559.5" ></text>
+</g>
+<g >
+<title>allocate (56,463,542 samples, 0.10%)</title><rect x="119.0" y="373" width="1.2" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="121.99" y="383.5" ></text>
+</g>
+<g >
+<title>bool __gnu_cxx::operator!=&lt;Point**, std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt; &gt; (56,532,330 samples, 0.10%)</title><rect x="115.4" y="421" width="1.2" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="118.39" y="431.5" ></text>
+</g>
+<g >
+<title>call_init (55,005,880,256 samples, 99.49%)</title><rect x="16.1" y="645" width="1173.9" height="15.0" fill="rgb(221,77,18)" rx="2" ry="2" />
+<text  x="19.07" y="655.5" >call_init</text>
+</g>
+<g >
+<title>std::_Vector_base&lt;Point*, std::allocator&lt;Point*&gt; &gt;::_M_deallocate (55,514,510 samples, 0.10%)</title><rect x="114.2" y="373" width="1.2" height="15.0" fill="rgb(207,11,2)" rx="2" ry="2" />
+<text  x="117.21" y="383.5" ></text>
+</g>
+<g >
+<title>fput_close_sync (56,435,673 samples, 0.10%)</title><rect x="10.1" y="565" width="1.2" height="15.0" fill="rgb(224,89,21)" rx="2" ry="2" />
+<text  x="13.11" y="575.5" ></text>
+</g>
+<g >
+<title>__relocate_a&lt;Point**, Point**, std::allocator&lt;Point*&gt; &gt; (55,552,501 samples, 0.10%)</title><rect x="144.1" y="469" width="1.2" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="147.07" y="479.5" ></text>
+</g>
+<g >
+<title>operator new (56,350,269 samples, 0.10%)</title><rect x="105.8" y="293" width="1.2" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="108.82" y="303.5" ></text>
+</g>
+<g >
+<title>build_tree (5,828,845,594 samples, 10.54%)</title><rect x="26.8" y="581" width="124.4" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="29.83" y="591.5" >build_tree</text>
+</g>
+<g >
+<title>serverAllocResourceUnderLock (111,877,817 samples, 0.20%)</title><rect x="1162.6" y="117" width="2.3" height="15.0" fill="rgb(249,203,48)" rx="2" ry="2" />
+<text  x="1165.56" y="127.5" ></text>
+</g>
+<g >
+<title>rmapiAllocWithSecInfoTls (168,430,447 samples, 0.30%)</title><rect x="1162.6" y="165" width="3.6" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="1165.56" y="175.5" ></text>
+</g>
+<g >
+<title>tick_nohz_handler (55,551,973 samples, 0.10%)</title><rect x="1151.8" y="341" width="1.2" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="1154.85" y="351.5" ></text>
+</g>
+<g >
+<title>void std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::_M_realloc_insert&lt;Point* const&amp;&gt; (111,088,637 samples, 0.20%)</title><rect x="108.2" y="373" width="2.4" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="111.23" y="383.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64 (55,550,613 samples, 0.10%)</title><rect x="13.7" y="613" width="1.2" height="15.0" fill="rgb(239,156,37)" rx="2" ry="2" />
+<text  x="16.68" y="623.5" ></text>
+</g>
+<g >
+<title>sched_balance_trigger (55,551,973 samples, 0.10%)</title><rect x="1151.8" y="293" width="1.2" height="15.0" fill="rgb(213,38,9)" rx="2" ry="2" />
+<text  x="1154.85" y="303.5" ></text>
+</g>
+<g >
+<title>cuMemcpyHtoD_v2 (559,261,249 samples, 1.01%)</title><rect x="1178.1" y="501" width="11.9" height="15.0" fill="rgb(249,206,49)" rx="2" ry="2" />
+<text  x="1181.06" y="511.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (55,535,470 samples, 0.10%)</title><rect x="1187.6" y="325" width="1.2" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1190.61" y="335.5" ></text>
+</g>
+<g >
+<title>forward&lt;Point* const&amp;&gt; (55,553,278 samples, 0.10%)</title><rect x="117.8" y="405" width="1.2" height="15.0" fill="rgb(230,116,27)" rx="2" ry="2" />
+<text  x="120.80" y="415.5" ></text>
+</g>
+<g >
+<title>drm_syncobj_array_wait_timeout.constprop.0 (56,291,953 samples, 0.10%)</title><rect x="14.9" y="437" width="1.2" height="15.0" fill="rgb(211,29,7)" rx="2" ry="2" />
+<text  x="17.87" y="447.5" ></text>
+</g>
+<g >
+<title>__clone3 (5,050,505 samples, 0.01%)</title><rect x="10.0" y="677" width="0.1" height="15.0" fill="rgb(239,158,37)" rx="2" ry="2" />
+<text  x="13.00" y="687.5" ></text>
+</g>
+<g >
+<title>[libcuda.so.595.84] (21,402,778,986 samples, 38.71%)</title><rect x="604.4" y="421" width="456.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="607.40" y="431.5" >[libcuda.so.595.84]</text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::~vector (55,594,597 samples, 0.10%)</title><rect x="145.3" y="469" width="1.1" height="15.0" fill="rgb(242,172,41)" rx="2" ry="2" />
+<text  x="148.25" y="479.5" ></text>
+</g>
+<g >
+<title>__ioctl (56,291,953 samples, 0.10%)</title><rect x="14.9" y="597" width="1.2" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="17.87" y="607.5" ></text>
+</g>
+<g >
+<title>cuCtxSynchronize (44,535,962,305 samples, 80.55%)</title><rect x="208.5" y="517" width="950.5" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="211.49" y="527.5" >cuCtxSynchronize</text>
+</g>
+<g >
+<title>nohz_balancer_kick (55,551,973 samples, 0.10%)</title><rect x="1151.8" y="277" width="1.2" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="1154.85" y="287.5" ></text>
+</g>
+<g >
+<title>void std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::_M_realloc_insert&lt;Point* const&amp;&gt; (111,874,398 samples, 0.20%)</title><rect x="113.0" y="389" width="2.4" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="116.00" y="399.5" ></text>
+</g>
+<g >
+<title>tick_nohz_handler (111,108,259 samples, 0.20%)</title><rect x="1058.8" y="277" width="2.4" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="1061.80" y="287.5" ></text>
+</g>
+<g >
+<title>all (55,290,305,061 samples, 100%)</title><rect x="10.0" y="709" width="1180.0" height="15.0" fill="rgb(213,39,9)" rx="2" ry="2" />
+<text  x="13.00" y="719.5" ></text>
+</g>
+<g >
+<title>cudaMemcpy (1,117,251,508 samples, 2.02%)</title><rect x="1166.2" y="549" width="23.8" height="15.0" fill="rgb(246,192,46)" rx="2" ry="2" />
+<text  x="1169.16" y="559.5" >c..</text>
+</g>
+<g >
+<title>tcache_get (56,463,542 samples, 0.10%)</title><rect x="119.0" y="325" width="1.2" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="121.99" y="335.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (5,050,505 samples, 0.01%)</title><rect x="10.0" y="565" width="0.1" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="13.00" y="575.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (56,435,673 samples, 0.10%)</title><rect x="10.1" y="597" width="1.2" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="13.11" y="607.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point, std::allocator&lt;Point&gt; &gt;::push_back (55,553,368 samples, 0.10%)</title><rect x="187.0" y="405" width="1.2" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="190.03" y="415.5" ></text>
+</g>
+<g >
+<title>allocate (56,408,300 samples, 0.10%)</title><rect x="134.5" y="389" width="1.2" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="137.50" y="399.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;Point*, std::allocator&lt;Point*&gt; &gt;::size (55,552,528 samples, 0.10%)</title><rect x="103.4" y="357" width="1.2" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="106.45" y="367.5" ></text>
+</g>
+</g>
+</svg>

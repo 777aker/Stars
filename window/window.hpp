@@ -20,7 +20,7 @@
 #include <GL/gl.h>
 #endif
 
-#define mydim 500
+#define mydim 1500
 extern double dim;
 extern double asp;
 
@@ -35,7 +35,8 @@ struct color
 const struct color asphalt = {52, 73, 94};	   // grey
 const struct color concrete = {127, 140, 141}; // light grey
 const struct color nephritis = {39, 174, 96};  // dark green
-const struct color midnight = {44, 62, 80};	   // dark grey
+const struct color midnight = {44, 62, 80};	   // dark blue
+const struct color asbestos = {127, 140, 141}; // dark grey
 const struct color emerald = {46, 204, 113};   // light green
 const struct color sunflower = {241, 196, 15}; // yellow
 const struct color alizarin = {231, 76, 60};   // bright red

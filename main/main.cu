@@ -16,7 +16,7 @@ bool step = false;
 int GPUThreadsPerBlock = -1;
 
 #define NUM_THREADS 1024
-#define NUM_BLOCKS 24
+#define NUM_BLOCKS (46 * 3)
 #define NUM_PARTICLES (NUM_THREADS * NUM_BLOCKS)
 #define QUAD_TREE_SIZE 256
 
